@@ -80,6 +80,8 @@ object ActionPolicy {
         "pay now", "pay ₹", "confirm payment", "confirm & pay", "place order",
         "buy now", "purchase", "checkout", "transfer", "send money", "proceed to pay",
         "delete account", "close account", "deactivate",
+        "оплатить", "оплатить сейчас", "подтвердить оплату", "перевести деньги",
+        "оформить заказ", "купить сейчас", "удалить аккаунт", "закрыть аккаунт",
         "भुगतान करें", "अभी भुगतान", "ऑर्डर करें", "खाता हटाएँ",
         "பணம் செலுத்து", "ஆர்டர் செய்", "கணக்கை நீக்கு",
     )
@@ -88,6 +90,8 @@ object ActionPolicy {
     private val CONFIRM = listOf(
         "send", "submit", "confirm", "book now", "apply", "accept", "agree",
         "post", "share", "invite", "cancel booking", "cancel order",
+        "отправить", "подтвердить", "заказать", "оформить", "применить",
+        "поделиться", "пригласить", "отменить заказ",
         "भेजें", "जमा करें", "पुष्टि करें", "बुक करें",
         "அனுப்பு", "சமர்ப்பி", "உறுதிப்படுத்து",
     )
@@ -106,6 +110,10 @@ object ActionPolicy {
         "install unknown", "unknown sources", "disable security", "turn off protection",
         "developer options", "usb debugging", "factory reset", "erase all data",
         "seed phrase", "recovery phrase", "private key",
+        "дать разрешение", "разрешить доступ", "администратор устройства",
+        "служба специальных возможностей", "неизвестные источники",
+        "отключить защиту", "режим разработчика", "отладка по usb",
+        "сброс настроек", "стереть все данные", "seed-фраза", "приватный ключ",
         "अनुमति दें", "फ़ैक्टरी रीसेट", "डेवलपर विकल्प",
         "அனுமதி வழங்கு", "தொழிற்சாலை மீட்டமை",
     )

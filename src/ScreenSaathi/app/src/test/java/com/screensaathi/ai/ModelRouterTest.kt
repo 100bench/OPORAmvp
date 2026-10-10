@@ -117,11 +117,11 @@ class ModelRouterTest {
     }
 
     @Test
-    fun `voice interaction uses the existing sarvam path with no realtime provider`() {
+    fun `voice interaction uses the existing OpenAI path with no realtime provider`() {
         val route = router().route(ModelRouter.Task.VOICE_INTERACTION)
 
         assertTrue(route is ModelRouter.Route.OnDevice)
-        assertTrue((route as ModelRouter.Route.OnDevice).reason.contains("Sarvam"))
+        assertTrue((route as ModelRouter.Route.OnDevice).reason.contains("OpenAI"))
     }
 
     @Test

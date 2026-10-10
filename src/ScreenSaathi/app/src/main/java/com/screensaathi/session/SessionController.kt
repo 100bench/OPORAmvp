@@ -2,13 +2,14 @@ package com.screensaathi.session
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
-import com.screensaathi.AppLauncher
 import com.screensaathi.circle.AccessibilityScreenCapture
 import com.screensaathi.circle.CircleContext
 import com.screensaathi.circle.CircleIntent
@@ -22,6 +23,7 @@ import com.screensaathi.ScreenReaderService
 import com.screensaathi.overlay.HighlightBounds
 import com.screensaathi.overlay.OverlayCommand
 import com.screensaathi.overlay.PillState
+import com.screensaathi.opora.OporaSettings
 import com.screensaathi.sarvam.AudioPlayer
 import com.screensaathi.sarvam.Language
 import com.screensaathi.sarvam.Sarvam
@@ -42,10 +44,10 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The orchestration layer. Turns UI taps into OverlayCommands, driving the
- * deterministic StepEngine plus (when a key is present and calls succeed) the
- * Sarvam voice loop: Saaras STT -> Sarvam-105B planner -> highlight -> Bulbul TTS.
+ * deterministic StepEngine plus (when the gateway is available) the
+ * OpenAI voice loop: transcription -> planner -> highlight -> speech.
  *
- * Every network step has a deterministic fallback. If the key is missing or any
+ * Every network step has a deterministic fallback. If the gateway is down or any
  * call fails, mic-tap starts the task and Next advances in order — the overlay
  * is never left frozen.
  *
@@ -108,7 +110,7 @@ class SessionController(
      * than a guessed "hi-IN": before anyone has spoken we have no evidence, and
      * English is the one language every authored string exists in.
      */
-    @Volatile private var lastLanguage = Language.DEFAULT
+    @Volatile private var lastLanguage = Language.APP_DEFAULT
 
     /** Set by [onStopTapped]; cleared as soon as the user engages again. */
     @Volatile private var stopped = false
@@ -144,6 +146,12 @@ class SessionController(
      */
     @Volatile private var currentHighlight: HighlightBounds? = null
 
+    /** One user goal can span several app screens; this is its visible step. */
+    @Volatile private var guidanceStepNumber = 1
+
+    /** Screen for which the current open-ended step was planned. */
+    @Volatile private var activePlanScreenSignature = ""
+
     /**
      * Options currently on the card, carried forward for the same reason as
      * [currentHighlight]: OverlayCommand.choices defaults to empty, so the
@@ -151,6 +159,10 @@ class SessionController(
      * otherwise wipe the very buttons the user is being asked to press.
      */
     @Volatile private var currentChoices: List<String> = emptyList()
+
+    /** Only locally-created allow-listed actions can ever enter this slot. */
+    @Volatile private var pendingAction: PendingAction? = null
+    @Volatile private var currentConfirmationRequired = false
 
     /** Diagnostics for the live turn, shown by long-pressing the pill. */
     @Volatile private var debug = VoiceDebug()
@@ -176,15 +188,68 @@ class SessionController(
         if (!isRecording) startListening() else stopAndProcess()
     }
 
+    /** Text and voice enter the same intent path; text simply skips STT. */
+    fun onTextSubmitted(text: String) {
+        if (text.isBlank()) return
+        val turn = newTurn()
+        abandonRecording(turn)
+        player.stop()
+        stopped = false
+        pendingAction = null
+        currentConfirmationRequired = false
+        currentHighlight = null
+        currentChoices = emptyList()
+        lastUserRequest = text.trim()
+        guidanceStepNumber = 1
+        activePlanScreenSignature = ""
+        render(OverlayCommand(PillState.THINKING, expanded = true,
+            instruction = "Проверяю текущий экран…", language = Language.APP_DEFAULT))
+        bg.post {
+            if (!isCurrent(turn)) return@post
+            if (!maybeProposeAllowedAction(text, turn)) {
+                processOpenEndedNext(turn, text, ScreenReaderService.instance?.snapshot())
+            }
+        }
+    }
+
+    fun onConfirmTapped() {
+        val pending = pendingAction ?: return
+        val turn = newTurn()
+        pendingAction = null // consume before doing anything: confirmation is one-shot
+        currentConfirmationRequired = false
+        currentHighlight = null
+        currentChoices = emptyList()
+
+        if (SystemClock.elapsedRealtime() > pending.expiresAtMs) {
+            showLocalMessage(turn, "Подтверждение истекло. Повторите просьбу.", PillState.ERROR)
+            return
+        }
+
+        when (pending.type) {
+            AllowedAction.CALL_CONTACT -> callConfiguredContact(pending, turn)
+        }
+    }
+
+    fun onDeclineTapped() {
+        val turn = newTurn()
+        pendingAction = null
+        currentConfirmationRequired = false
+        currentHighlight = null
+        currentChoices = emptyList()
+        showLocalMessage(turn, "Действие отменено.", PillState.IDLE)
+    }
+
     fun onNextTapped() {
         // Opening a turn here invalidates any plan still in flight, so a slow
         // planner response cannot yank the user back a step after they advance.
         val turn = newTurn()
+        pendingAction = null
+        currentConfirmationRequired = false
         abandonRecording(turn)
         stopped = false
         val e = engine
         if (e == null) {
-            startDefaultTask(turn)
+            showLocalMessage(turn, "Скажите или напишите, что хотите найти на текущем экране.", PillState.IDLE)
             return
         }
         if (e.task.id == "open_ended") {
@@ -215,12 +280,20 @@ class SessionController(
         val turn = newTurn()
         abandonRecording(turn)
         stopped = true
+        pendingAction = null
+        currentConfirmationRequired = false
         player.stop()
         currentHighlight = null
         lastHighlightQuery = null
         lastHighlightScreenSig = ""
         awaitingResettle = false
         currentChoices = emptyList()
+        if (engine?.task?.id == "open_ended") {
+            engine = null
+            lastUserRequest = ""
+            activePlanScreenSignature = ""
+            guidanceStepNumber = 1
+        }
         // Drop the app pin: after a stop the user may pick a different app, and
         // a stale pin would make guidance wait forever for the old one.
         chosenPackage = ""
@@ -272,21 +345,20 @@ class SessionController(
     private fun startListening() {
         val turn = newTurn()
         stopped = false
+        pendingAction = null
+        currentConfirmationRequired = false
 
         // A denied microphone used to fail silently: recorder.start() returned
         // false and the app quietly ran the deterministic task, so the user was
         // never told why the voice loop does nothing. Say it, then keep guiding.
         if (!hasMicPermission()) {
-            startDefaultTask(
-                turn,
-                lead = Phrases.get(Phrases.Key.MIC_OFF, lastLanguage),
-                note = "RECORD_AUDIO denied",
-            )
+            publishDebug(turn) { it.copy(note = "RECORD_AUDIO denied") }
+            showLocalMessage(turn, "Разрешите микрофон или напишите просьбу текстом.", PillState.ERROR)
             return
         }
-        if (!Sarvam.hasKey()) {
-            // No key: skip STT entirely, just run the task deterministically.
-            startDefaultTask(turn, note = "no Sarvam key — deterministic path")
+        if (!Sarvam.isConfigured()) {
+            publishDebug(turn) { it.copy(note = "no AI gateway — voice unavailable") }
+            showLocalMessage(turn, "Голос сейчас недоступен. Напишите просьбу текстом.", PillState.ERROR)
             return
         }
         // Flip the pill first: the user must see "Listening…" the instant they
@@ -302,7 +374,7 @@ class SessionController(
             purgeStaleCaptures(turn)
             if (recorder.start(inputFileFor(turn))) return@post
             isRecording = false
-            startDefaultTask(turn, note = "recorder failed to start")
+            showLocalMessage(turn, "Не удалось включить микрофон. Попробуйте текстовый ввод.", PillState.ERROR)
         }
 
         // Close the turn on our own clock as well as on a second tap.
@@ -373,11 +445,15 @@ class SessionController(
         // launches against a string like "Book a taxi", which names no app, so
         // every launch is refused for the wrong reason.
         lastUserRequest = sttResult.transcript
+        guidanceStepNumber = 1
+        activePlanScreenSignature = ""
         // A fresh spoken request supersedes any earlier list selection.
         userSelectedPackage = ""
         publishDebug(turn) {
             it.copy(heard = sttResult.transcript, sttMs = sttMs, language = lastLanguage)
         }
+
+        if (maybeProposeAllowedAction(sttResult.transcript, turn)) return
 
         // Persistent memory: if we're waiting for an app choice, see if they spoke it.
         val activeApps = offeredApps
@@ -483,23 +559,29 @@ class SessionController(
      * dead-ending, and resume where they were if a task is already running.
      */
     private fun fallbackAfterFailedSpeech(turn: Int, key: Phrases.Key) {
-        val e = engine
-        if (e != null) {
-            presentCurrentStep(e, turn, speak = true)
-        } else {
-            startDefaultTask(turn, lead = Phrases.get(key, lastLanguage))
-        }
+        val phrase = Phrases.get(key, lastLanguage)
+        currentHighlight = null
+        engine = null
+        renderIfCurrent(turn, OverlayCommand(PillState.ERROR, expanded = true,
+            instruction = phrase.text, language = phrase.language, highlight = null))
+        speech.post { speak(phrase, turn) }
     }
 
-    private fun processOpenEndedNext(turn: Int, intent: String, snapshot: ScreenSnapshot?) {
+    private fun processOpenEndedNext(
+        turn: Int,
+        intent: String,
+        snapshot: ScreenSnapshot?,
+        completedStep: String? = null,
+    ) {
         val snap = snapshot ?: ScreenReaderService.instance?.snapshot() ?: ScreenSnapshot.EMPTY
+        activePlanScreenSignature = snap.signature()
         
         renderIfCurrent(turn, OverlayCommand(PillState.THINKING, expanded = true,
             instruction = Phrases.get(Phrases.Key.THINKING, lastLanguage).text,
             language = lastLanguage))
 
         val tp0 = SystemClock.uptimeMillis()
-        val plan = planner.planOpenEnded(intent, snap, lastLanguage)
+        val plan = planner.planOpenEnded(intent, snap, lastLanguage, completedStep)
         val planMs = SystemClock.uptimeMillis() - tp0
         
         if (!isCurrent(turn)) return
@@ -507,13 +589,16 @@ class SessionController(
         if (plan != null) {
             if (plan.isDone || plan.actionType == "answer") {
                 currentHighlight = null
+                engine = null
+                activePlanScreenSignature = ""
                 val textToSpeak = if (plan.instruction.isNotBlank()) {
                     Spoken(plan.instruction, plan.language)
                 } else {
                     Phrases.get(Phrases.Key.ALL_DONE, lastLanguage)
                 }
                 renderIfCurrent(turn, OverlayCommand(PillState.IDLE, expanded = true,
-                    instruction = textToSpeak.text, highlight = null))
+                    instruction = textToSpeak.text, language = textToSpeak.language,
+                    highlight = null))
                 speech.post { speak(textToSpeak, turn) }
                 return
             }
@@ -554,13 +639,25 @@ class SessionController(
 
             val blockedReason = (verdict as? SafetyGuard.Verdict.Block)?.reason
                 ?: (launchVerdict as? SafetyGuard.Verdict.Block)?.reason
-            val safeActionType = if (blockedReason != null) "guide" else plan.actionType
+            // The model may explain, answer, or nominate a highlight. It can
+            // never manufacture an executable action; those are created only
+            // by maybeProposeAllowedAction from the two local configured IDs.
+            val modelTriedAction = plan.actionType !in setOf("guide", "answer")
+            val safeActionType = if (blockedReason != null || modelTriedAction) "guide"
+                else plan.actionType
 
             // Create a single step guided task so we can reuse the presentation logic
+            val numberedInstruction = if (plan.instruction.trimStart()
+                    .startsWith("Шаг ", ignoreCase = true)) {
+                plan.instruction
+            } else {
+                "Шаг $guidanceStepNumber. ${plan.instruction}"
+            }
             val openEndedStep = TaskStep(
                 id = "open_ended_step",
                 resourceId = plan.targetResourceId,
-                instruction = plan.instruction,
+                instruction = numberedInstruction,
+                instructions = mapOf(plan.language to numberedInstruction),
                 textAny = if (plan.targetText.isNotEmpty()) listOf(plan.targetText) else emptyList(),
                 actionType = safeActionType,
                 actionPayload = plan.actionPayload,
@@ -575,7 +672,11 @@ class SessionController(
                     wantResourceId = plan.targetResourceId.ifEmpty { "text:${plan.targetText}" },
                     planMs = planMs, confidence = plan.confidence,
                     language = plan.language,
-                    note = blockedReason?.let { "action blocked -> guide: $it" },
+                    note = when {
+                        blockedReason != null -> "action blocked -> guide: $blockedReason"
+                        modelTriedAction -> "model action downgraded -> guide"
+                        else -> null
+                    },
                 )
             }
             presentCurrentStep(e, turn, speak = true)
@@ -583,28 +684,13 @@ class SessionController(
             publishDebug(turn) {
                 it.copy(note = "planner unavailable or failed open-ended")
             }
-            fallbackAfterFailedSpeech(turn, Phrases.Key.DIDNT_CATCH)
+            engine = null
+            showLocalMessage(
+                turn,
+                "Не удалось получить подсказку. Проверьте подключение к AI и попробуйте ещё раз.",
+                PillState.ERROR,
+            )
         }
-    }
-
-    // --- Deterministic path ---------------------------------------------------
-
-    /**
-     * Start (or restart) the default task with no network involved. [lead] lets
-     * the caller explain *why* we are on this path instead of silently
-     * pretending the voice loop ran.
-     */
-    private fun startDefaultTask(turn: Int, lead: Spoken? = null, note: String? = null) {
-        note?.let { n -> publishDebug(turn) { it.copy(note = n) } }
-        val task = tasks.byId(DEFAULT_TASK) ?: tasks.tasks.firstOrNull()
-        if (task == null) {
-            val none = Phrases.get(Phrases.Key.NO_TASKS, lastLanguage)
-            renderIfCurrent(turn, OverlayCommand(PillState.ERROR, expanded = true,
-                instruction = none.text, language = none.language))
-            return
-        }
-        val e = StepEngine(task); engine = e
-        presentStep(e, lead ?: e.currentStep.spokenFor(lastLanguage), turn, speak = true)
     }
 
     private fun pickTask(transcript: String): GuidedTask {
@@ -713,7 +799,6 @@ class SessionController(
             // layer and call AppLauncher unguarded; the polling/persistence
             // behaviour is taken, the unguarded launch is NOT — the gating below
             // is the version from this branch.
-            var launchAttempted = false
             val startedAt = SystemClock.uptimeMillis()
 
             // What the screen looked like when this step was planned. If the
@@ -793,7 +878,15 @@ class SessionController(
                     plannedFor = sig
                     Log.d(TAG, "SCREEN_CHANGED replanning pkg=$currentPkg intent='$lastUserRequest'")
                     currentHighlight = null
-                    bg.post { processOpenEndedNext(turn, lastUserRequest, snap) }
+                    guidanceStepNumber++
+                    bg.post {
+                        processOpenEndedNext(
+                            turn,
+                            lastUserRequest,
+                            snap,
+                            completedStep = instruction.text,
+                        )
+                    }
                     return@post
                 }
 
@@ -824,11 +917,6 @@ class SessionController(
                 // onUserClicked() advances the step. That keeps a model-proposed
                 // tap from becoming a device action the user never asked for —
                 // the open gap flagged in the safety audit.
-                if (!launchAttempted && target.actionType == "launch_app") {
-                    launchAttempted = true
-                    performGuardedLaunch(target, instruction, turn)
-                }
-
                 if (SystemClock.uptimeMillis() - startedAt > TARGET_POLL_TIMEOUT_MS) break
                 try { Thread.sleep(TARGET_POLL_INTERVAL_MS) } catch (_: InterruptedException) { break }
             }
@@ -847,55 +935,6 @@ class SessionController(
         val lower = packageName.lowercase()
         if (lower == context.packageName.lowercase()) return false
         return lower.contains("launcher") || lower == "com.android.systemui" || lower == "android"
-    }
-
-    /**
-     * Launch, but only when device evidence and the user's own words authorise
-     * it, and never report a launch that did not happen.
-     */
-    private fun performGuardedLaunch(target: TaskStep, instruction: Spoken, turn: Int) {
-        // Prefer the real utterance; fall back to the task title only when
-        // nothing has been spoken yet (e.g. a rehearsal trigger).
-        val requestText = lastUserRequest.ifBlank { engine?.task?.title.orEmpty() }
-        val verdict = SafetyGuard.validateLaunchAuthorization(
-            userRequest = requestText,
-            resolution = DeviceContextProvider.snapshot(context).resolveApp(target.actionPayload),
-            userSelectedPackage = userSelectedPackage.ifBlank { null },
-        )
-        if (verdict is SafetyGuard.Verdict.Block) {
-            publishDebug(turn) { it.copy(note = "launch blocked: ${verdict.reason}") }
-            val msg = Phrases.get(Phrases.Key.APP_WONT_OPEN, lastLanguage)
-            renderIfCurrent(turn, OverlayCommand(PillState.ERROR, expanded = true,
-                instruction = msg.text, language = msg.language, highlight = null))
-            speech.post { speak(msg, turn) }
-            return
-        }
-
-        AppLauncher.resolvePackageName(context, target.actionPayload)
-            ?.takeIf { it.isNotEmpty() }
-            ?.let { chosenPackage = it }
-
-        bg.postDelayed({
-            if (!isCurrent(turn) || stopped) return@postDelayed
-            // The boolean used to be discarded, so a launch that never happened
-            // was announced as if it had.
-            val launched = AppLauncher.launchApp(context, target.actionPayload)
-            if (!launched) {
-                publishDebug(turn) {
-                    it.copy(note = "launch failed (not resolvable): ${target.actionPayload}")
-                }
-                val msg = Phrases.get(Phrases.Key.APP_WONT_OPEN, lastLanguage)
-                renderIfCurrent(turn, OverlayCommand(PillState.ERROR, expanded = true,
-                    instruction = msg.text, language = msg.language, highlight = null))
-                speech.post { speak(msg, turn) }
-                return@postDelayed
-            }
-            // The ring belonged to the previous screen; the launched app draws
-            // its own, and the poll loop above will find the next target.
-            currentHighlight = null
-            renderIfCurrent(turn, OverlayCommand(PillState.GUIDING, expanded = true,
-                instruction = instruction.text, language = instruction.language, highlight = null))
-        }, 300)
     }
 
     /**
@@ -1142,7 +1181,7 @@ class SessionController(
         lastHighlightScreenSig = ""
 
         renderIfCurrent(turn, OverlayCommand(PillState.THINKING, expanded = true,
-            instruction = "Looking for \"$query\"…", language = lastLanguage))
+            instruction = "Ищу «$query»…", language = lastLanguage))
 
         bg.post { runHighlightPollLoop(turn, query) }
     }
@@ -1186,10 +1225,10 @@ class SessionController(
                 // current before the transition callback clears the old target.
                 if (hl != null) lastHighlightScreenSig = snap.signature()
                 val say = when (result) {
-                    is TargetResolver.Result.Found -> "Here it is."
+                    is TargetResolver.Result.Found -> "Вот нужный элемент."
                     is TargetResolver.Result.Ambiguous ->
-                        "I found ${result.candidates.size} things matching \"$query\" — which one?"
-                    is TargetResolver.Result.NotFound -> "I can't see \"$query\" on this screen."
+                        "Нашлось несколько похожих элементов (${result.candidates.size}). Уточните, какой нужен."
+                    is TargetResolver.Result.NotFound -> "На этом экране не видно элемента «$query»."
                 }
                 renderIfCurrent(turn, OverlayCommand(
                     if (hl != null) PillState.GUIDING else PillState.ERROR,
@@ -1292,20 +1331,58 @@ class SessionController(
      * The user physically tapped something. That is the signal to advance —
      * not a timer, and not an action we performed on their behalf.
      */
-    fun onUserClicked() {
+    @Synchronized
+    fun onUserClicked(clickedBounds: Rect? = null) {
+        val now = SystemClock.uptimeMillis()
+        // A single tap can produce several accessibility events.
+        if (now - lastUserClickAt < USER_CLICK_DEBOUNCE_MS) return
+        lastUserClickAt = now
+
+        val liveEngine = engine
+        val highlight = currentHighlight
+        if (liveEngine != null && highlight != null) {
+            if (clickedBounds != null && !Rect.intersects(
+                    clickedBounds,
+                    Rect(highlight.left, highlight.top, highlight.right, highlight.bottom),
+                )
+            ) {
+                Log.d(TAG, "USER_CLICK ignored: outside highlighted target $clickedBounds")
+                return
+            }
+
+            // Invalidate the long-running target poll immediately. Posting the
+            // click behind that poll used to delay it by up to 30 seconds.
+            if (liveEngine.task.id == "open_ended") {
+                val goal = liveEngine.task.title
+                val completed = liveEngine.currentStep.instruction
+                val previousScreen = activePlanScreenSignature
+                val turn = newTurn()
+                currentHighlight = null
+                guidanceStepNumber++
+                player.stop()
+                clearHighlightInstant()
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.THINKING,
+                        expanded = false,
+                        instruction = "Смотрю следующий экран…",
+                        language = lastLanguage,
+                    ),
+                )
+                bg.post {
+                    continueAfterTargetTap(turn, goal, previousScreen, completed)
+                }
+                return
+            }
+
+            onNextTapped()
+            return
+        }
+
         bg.post {
             val turn = turnId.get()
             if (stopped || !isCurrent(turn)) return@post
-            val now = SystemClock.uptimeMillis()
-            // A single tap can produce several accessibility events.
-            if (now - lastUserClickAt < USER_CLICK_DEBOUNCE_MS) return@post
-            lastUserClickAt = now
-
-            if (engine != null) {
-                onNextTapped()
-                return@post
-            }
-
             // The ad-hoc highlight loop (highlightTarget) has no step engine
             // and so was invisible to this click handler entirely — a tap
             // never told it anything. It kept re-matching the same query
@@ -1333,11 +1410,40 @@ class SessionController(
         }
     }
 
+    /** Wait for the destination UI to settle, then continue the same goal. */
+    private fun continueAfterTargetTap(
+        turn: Int,
+        goal: String,
+        previousScreenSignature: String,
+        completedStep: String,
+    ) {
+        val startedAt = SystemClock.uptimeMillis()
+        val deadline = startedAt + NEXT_SCREEN_WAIT_MS
+        var snapshot: ScreenSnapshot? = null
+
+        while (isCurrent(turn) && !stopped && SystemClock.uptimeMillis() < deadline) {
+            snapshot = ScreenReaderService.instance?.snapshot()
+            val signature = snapshot?.signature().orEmpty()
+            val changed = signature.isNotEmpty() && signature != previousScreenSignature
+            val sameScreenGraceElapsed =
+                SystemClock.uptimeMillis() - startedAt >= SAME_SCREEN_REPLAN_DELAY_MS
+            if (snapshot?.settled == true && (changed || sameScreenGraceElapsed)) break
+            try {
+                Thread.sleep(NEXT_SCREEN_POLL_INTERVAL_MS)
+            } catch (_: InterruptedException) {
+                return
+            }
+        }
+
+        if (!isCurrent(turn) || stopped) return
+        processOpenEndedNext(turn, goal, snapshot, completedStep)
+    }
+
     @Volatile private var lastUserClickAt: Long = 0L
 
     /** Runs on [speech]. Never on the thread that resolves the highlight. */
     private fun speak(spoken: Spoken, turn: Int) {
-        if (!Sarvam.hasKey()) return
+        if (!Sarvam.isConfigured()) return
         val bytes = tts.synthesize(spoken) ?: return
         if (!isCurrent(turn) || stopped) return
         // Carry currentHighlight through both renders — the ring must survive
@@ -1347,12 +1453,14 @@ class SessionController(
             onStart = {
                 renderIfCurrent(turn, OverlayCommand(PillState.SPEAKING, expanded = true,
                     instruction = spoken.text, language = spoken.language,
-                    highlight = currentHighlight, choices = currentChoices))
+                    highlight = currentHighlight, choices = currentChoices,
+                    confirmationRequired = currentConfirmationRequired))
             },
             onDone = {
                 renderIfCurrent(turn, OverlayCommand(PillState.GUIDING, expanded = true,
                     instruction = spoken.text, language = spoken.language,
-                    highlight = currentHighlight, choices = currentChoices))
+                    highlight = currentHighlight, choices = currentChoices,
+                    confirmationRequired = currentConfirmationRequired))
             },
         )
     }
@@ -1470,6 +1578,108 @@ class SessionController(
     /** A package the user explicitly picked from a presented list. */
     @Volatile private var userSelectedPackage: String = ""
 
+    private enum class AllowedAction { CALL_CONTACT }
+
+    private data class PendingAction(
+        val type: AllowedAction,
+        val targetId: String,
+        val label: String,
+        val phone: String = "",
+        val expiresAtMs: Long,
+    )
+
+    /**
+     * Recognises only an explicit current request for the optional local call
+     * contact. No model output is consulted and the phone number is never
+     * added to a prompt.
+     */
+    private fun maybeProposeAllowedAction(request: String, turn: Int): Boolean {
+        val lower = request.trim().lowercase()
+        if (lower.startsWith("как ") || lower.startsWith("где ") ||
+            lower.startsWith("почему ") || lower.startsWith("можно ли ")
+        ) return false
+
+        val settings = OporaSettings.load(context)
+        val wantsCall = listOf("позвони", "позвонить", "набери", "call ")
+            .any(lower::contains)
+        if (wantsCall && mentionsConfiguredTarget(lower, settings.contactName, "контакт")) {
+            val phone = OporaSettings.normalizedPhone(settings.contactPhone)
+            if (!settings.hasContact || phone == null) {
+                showLocalMessage(turn, "Сначала сохраните допустимый контакт в настройках «Опоры».", PillState.ERROR)
+                return true
+            }
+            val suffix = phone.takeLast(4)
+            proposeAction(
+                PendingAction(
+                    type = AllowedAction.CALL_CONTACT,
+                    targetId = OporaSettings.CONTACT_TARGET_ID,
+                    label = settings.contactName,
+                    phone = phone,
+                    expiresAtMs = SystemClock.elapsedRealtime() + CONFIRM_TTL_MS,
+                ),
+                "Позвонить контакту ${settings.contactName} (номер ••••$suffix)?",
+                turn,
+            )
+            return true
+        }
+        return false
+    }
+
+    private fun mentionsConfiguredTarget(request: String, configuredName: String, generic: String): Boolean {
+        if (request.contains(generic) || request.contains("избранн")) return true
+        val words = configuredName.lowercase().split(Regex("\\s+")).filter { it.length >= 3 }
+        return words.any { name ->
+            val stem = name.take(3)
+            request.split(Regex("[^а-яa-z0-9]+"))
+                .any { spoken -> spoken.startsWith(stem) }
+        }
+    }
+
+    private fun proposeAction(action: PendingAction, message: String, turn: Int) {
+        pendingAction = action
+        currentConfirmationRequired = true
+        currentHighlight = null
+        currentChoices = emptyList()
+        renderIfCurrent(turn, OverlayCommand(PillState.GUIDING, expanded = true,
+            instruction = "$message Подтверждение действует 30 секунд.",
+            language = Language.APP_DEFAULT, confirmationRequired = true))
+        speech.post { speak(Spoken(message, Language.APP_DEFAULT), turn) }
+        bg.postDelayed({
+            if (pendingAction === action) {
+                pendingAction = null
+                currentConfirmationRequired = false
+                showLocalMessage(turn, "Подтверждение истекло. Повторите просьбу.", PillState.IDLE)
+            }
+        }, CONFIRM_TTL_MS)
+    }
+
+    private fun callConfiguredContact(action: PendingAction, turn: Int) {
+        val settings = OporaSettings.load(context)
+        val currentPhone = OporaSettings.normalizedPhone(settings.contactPhone)
+        if (action.targetId != OporaSettings.CONTACT_TARGET_ID || currentPhone != action.phone) {
+            showLocalMessage(turn, "Настройки контакта изменились. Повторите просьбу.", PillState.ERROR)
+            return
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            showLocalMessage(turn, "Разрешите звонки на экране настройки «Опоры».", PillState.ERROR)
+            return
+        }
+        val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(action.phone)}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+            .onSuccess { showLocalMessage(turn, "Начинаю звонок: ${action.label}.", PillState.IDLE) }
+            .onFailure { showLocalMessage(turn, "Не удалось начать звонок.", PillState.ERROR) }
+    }
+
+    private fun showLocalMessage(turn: Int, message: String, state: PillState) {
+        renderIfCurrent(turn, OverlayCommand(state, expanded = true,
+            instruction = message, language = Language.APP_DEFAULT,
+            confirmationRequired = false))
+        speech.post { speak(Spoken(message, Language.APP_DEFAULT), turn) }
+    }
+
     private fun hasMicPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -1490,6 +1700,7 @@ class SessionController(
 
     fun dispose() {
         turnId.incrementAndGet() // invalidate anything still in flight
+        if (instance === this) instance = null
         player.stop()
         recorder.stop()
         worker.quitSafely()
@@ -1511,7 +1722,6 @@ class SessionController(
         private const val CROSS_APP_ATTEMPTS = 40
         private const val RESOLVE_INTERVAL_MS = 120L
         private const val CONFIDENCE_FLOOR = 0.5
-        private const val DEFAULT_TASK = "pay_bill"
         private const val CAPTURE_PREFIX = "saathi_input_"
 
         /** Below this the clip is a mis-tap, not speech. */
@@ -1520,9 +1730,16 @@ class SessionController(
         /** Let a screen finish drawing before treating it as a real change. */
         private const val REPLAN_SETTLE_MS = 1_200L
 
+        /** Give a tapped app time to draw its destination before re-planning. */
+        private const val NEXT_SCREEN_WAIT_MS = 2_500L
+        /** A focus/keyboard change may keep the same signature; still continue. */
+        private const val SAME_SCREEN_REPLAN_DELAY_MS = 1_000L
+        private const val NEXT_SCREEN_POLL_INTERVAL_MS = 120L
+
         private const val MIN_SPEECH_MS = 400L
 
         /** Longest single-tap capture before it is closed automatically. */
         private const val MAX_UTTERANCE_MS = 7_000L
+        private const val CONFIRM_TTL_MS = 30_000L
     }
 }

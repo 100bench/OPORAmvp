@@ -19,6 +19,9 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
@@ -57,6 +60,8 @@ class OverlayService : Service() {
     private lateinit var debugPanel: TextView
     private lateinit var choiceRow: LinearLayout
     private lateinit var choiceButtons: List<TextView>
+    private lateinit var confirmationRow: LinearLayout
+    private lateinit var textCommand: EditText
 
     private var expanded = false
     private var debugVisible = false
@@ -77,6 +82,8 @@ class OverlayService : Service() {
      *  this temporarily; this is what it returns to. */
     private var userX = 0
     private var userY = 0
+    /** True while the assistant card is temporarily moved away from a target. */
+    private var avoidingHighlight = false
     private var dockAnimator: android.animation.ValueAnimator? = null
     private lateinit var minimizedDot: View
 
@@ -121,7 +128,7 @@ class OverlayService : Service() {
         when (intent?.action) {
             ACTION_RUN_TASK -> {
                 val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return START_STICKY
-                val language = intent.getStringExtra(EXTRA_LANGUAGE) ?: "en-IN"
+                val language = intent.getStringExtra(EXTRA_LANGUAGE) ?: Language.APP_DEFAULT
                 main.post { controller.startTaskById(taskId, language) }
             }
             // Pick an option without touching the screen. Same code path as the
@@ -160,6 +167,11 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
         )
+        // Android 12+ blocks pass-through touches beneath a full-screen
+        // TYPE_APPLICATION_OVERLAY whose obscuring opacity is above 0.8, even
+        // with FLAG_NOT_TOUCHABLE. Keep this visual-only layer below that
+        // threshold so the highlighted app control remains tappable.
+        lp.alpha = 0.75f
         lp.gravity = Gravity.TOP or Gravity.START
         wm.addView(highlightView, lp)
     }
@@ -182,6 +194,24 @@ class OverlayService : Service() {
             .map { pillRoot.findViewById<TextView>(it) }
         choiceButtons.forEachIndexed { i, b ->
             b.setOnClickListener { controller.onChoiceTapped(i) }
+        }
+        confirmationRow = pillRoot.findViewById(R.id.confirmation_row)
+        pillRoot.findViewById<View>(R.id.confirm_button).setOnClickListener {
+            controller.onConfirmTapped()
+        }
+        pillRoot.findViewById<View>(R.id.decline_button).setOnClickListener {
+            controller.onDeclineTapped()
+        }
+        textCommand = pillRoot.findViewById(R.id.text_command)
+        textCommand.setOnClickListener { focusTextInput() }
+        textCommand.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                submitTextCommand()
+                true
+            } else false
+        }
+        pillRoot.findViewById<View>(R.id.send_text_button).setOnClickListener {
+            submitTextCommand()
         }
 
         // The collapsed pill IS the talk control. It used to only expand the
@@ -617,6 +647,8 @@ class OverlayService : Service() {
 
         cmd.instruction?.let { instructionText.text = it }
         renderChoices(cmd.choices)
+        confirmationRow.visibility =
+            if (cmd.confirmationRequired) View.VISIBLE else View.GONE
 
         if (cmd.expanded != expanded) setExpanded(cmd.expanded)
 
@@ -627,9 +659,45 @@ class OverlayService : Service() {
         val h = cmd.highlight
         if (h == null) {
             highlightView.clear()
+            if (avoidingHighlight) {
+                avoidingHighlight = false
+                pillRoot.post { applyPosition(userX, userY, respectKeyboard = true) }
+            }
         } else {
             highlightView.show(h.left, h.top, h.right, h.bottom, h.shape, h.pulse)
+            // The card is a real touchable window and must never cover the
+            // control it asks the user to press.
+            pillRoot.post { moveCardAwayFrom(h) }
         }
+    }
+
+    private fun moveCardAwayFrom(target: com.screensaathi.overlay.HighlightBounds) {
+        val lp = pillParams ?: return
+        val (width, height) = windowSize()
+        if (width <= 0 || height <= 0) return
+
+        val margin = dp(12)
+        val card = Rect(lp.x, lp.y, lp.x + width, lp.y + height)
+        val guardedTarget = Rect(
+            target.left - margin,
+            target.top - margin,
+            target.right + margin,
+            target.bottom + margin,
+        )
+        if (!Rect.intersects(card, guardedTarget)) return
+
+        val safe = safeArea()
+        val above = guardedTarget.top - height
+        val below = guardedTarget.bottom
+        val nextY = when {
+            above >= safe.top -> above
+            below + height <= safe.bottom -> below
+            else -> if (target.top > safe.centerY()) safe.top else safe.bottom - height
+        }.coerceIn(safe.top, (safe.bottom - height).coerceAtLeast(safe.top))
+
+        lp.y = nextY
+        wm.updateViewLayout(pillRoot, lp)
+        avoidingHighlight = true
     }
 
     /**
@@ -644,6 +712,30 @@ class OverlayService : Service() {
             button.visibility = if (label == null) View.GONE else View.VISIBLE
             if (label != null) button.text = label
         }
+    }
+
+    private fun focusTextInput() {
+        val lp = pillParams ?: return
+        lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        wm.updateViewLayout(pillRoot, lp)
+        textCommand.requestFocus()
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(textCommand, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun submitTextCommand() {
+        val text = textCommand.text.toString().trim()
+        if (text.isBlank()) return
+        textCommand.setText("")
+        textCommand.clearFocus()
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(textCommand.windowToken, 0)
+        pillParams?.let { lp ->
+            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            wm.updateViewLayout(pillRoot, lp)
+        }
+        controller.onTextSubmitted(text)
     }
 
     /** Screen position of the pill, handed to the cursor layer as its home. */
@@ -680,14 +772,14 @@ class OverlayService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             nm.createNotificationChannel(
                 NotificationChannel(
-                    channelId, "ScreenSaathi", NotificationManager.IMPORTANCE_LOW
+                    channelId, "Опора", NotificationManager.IMPORTANCE_LOW
                 )
             )
         }
         val notif: Notification =
             androidx.core.app.NotificationCompat.Builder(this, channelId)
-                .setContentTitle("ScreenSaathi is ready")
-                .setContentText("Tap the floating pill to start.")
+                .setContentTitle("Опора готова")
+                .setContentText("Нажмите на плавающую кнопку, чтобы начать.")
                 .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                 .setOngoing(true)
                 .build()

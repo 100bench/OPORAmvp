@@ -4,7 +4,7 @@
 Voice / Input
       │
       ▼
-Intent Understanding  (Saaras STT → Sarvam-105B planner)
+Intent Understanding  (gpt-transcribe → gpt-6-luna planner)
       │
       ▼
 Session Controller  (turns, generations, screen-change invalidation)
@@ -76,9 +76,13 @@ state-machine enum that replaced a set of independent booleans which used to
 be able to contradict each other.
 
 ### Voice — `sarvam/`
-`SarvamStt.kt` (Saaras), `SarvamPlanner.kt` (Sarvam-105B, forced tool call),
-`SarvamTts.kt` (Bulbul), `WavRecorder.kt` (16kHz mono PCM capture + RMS). If
-the key is absent or a call fails, `StepEngine` (deterministic, no network)
+The package and `Sarvam*` class names are retained as legacy names to keep the
+migration small. They call OpenAI through a localhost development gateway:
+`SarvamStt.kt` (`gpt-transcribe`),
+`SarvamPlanner.kt` (`gpt-6-luna`, forced tool call), `SarvamTts.kt`
+(`gpt-4o-mini-tts`), and `WavRecorder.kt` (16kHz mono PCM capture + RMS). The
+gateway owns the API key; no secret is present in the APK. If a call fails,
+`StepEngine` (deterministic, no network)
 completes the task anyway — every network step has a scripted fallback.
 
 ### Device inventory — `device/DeviceContext.kt`, `device/DeviceContextProvider.kt`

@@ -28,16 +28,16 @@ wake word, and no background recording. See `sarvam/WavRecorder.kt`.
 
 ## What leaves the device
 
-Three outbound calls, all HTTPS to `api.sarvam.ai`, all defined in
+Three outbound calls, all HTTPS to `api.openai.com`, all defined in
 `sarvam/Sarvam.kt`:
 
 | Call | What is sent | What comes back |
 | --- | --- | --- |
-| Saaras STT | The recorded `.wav` clip | Transcript + detected language |
-| Sarvam-105B planner | The transcript, the current task's step ids, and the current screen snapshot as plain text | A step id, a target resource id, a spoken instruction, and a language code |
-| Bulbul TTS | The instruction text and its language code | Synthesized audio (WAV) |
+| `gpt-transcribe` STT | The recorded `.wav` clip | Transcript + detected language |
+| `gpt-6-luna` planner | The transcript, the current task's step ids, and the current screen snapshot as plain text | A step id, a target resource id, a spoken instruction, and a language code |
+| `gpt-4o-mini-tts` | The instruction text and a voice instruction | Synthesized audio (WAV) |
 
-No third party other than Sarvam ever receives data from this app. There is
+No third party other than OpenAI ever receives data from this app. There is
 no analytics SDK, no crash reporter, no ad SDK, and no telemetry of any kind
 in the dependency list (`gradle/libs.versions.toml`) — this is a design
 decision (see the top-level product rules: "no telemetry"), not an oversight.
@@ -57,10 +57,9 @@ decision (see the top-level product rules: "no telemetry"), not an oversight.
 
 ## What a user cannot currently do
 
-There is no in-app control to review what was sent, no opt-out of the cloud
-calls short of not configuring a Sarvam key (which disables the feature
-entirely and falls back to the deterministic `StepEngine`), and no on-device
-processing option. These are real gaps for anything beyond a demo — tracked
+There is no in-app control to review what was sent, no in-app opt-out of the
+cloud calls, and no on-device processing option. Stopping the development
+gateway disables live AI. These are real gaps for anything beyond a demo — tracked
 in `docs/PARKING_LOT.md` and the repository's issues labeled
 [`audit-followup`](https://github.com/NITISH-R-G/ScreenSaathi/issues?q=is%3Aissue+label%3Aaudit-followup).
 

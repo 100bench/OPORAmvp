@@ -4,15 +4,16 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
-// The Sarvam key lives in local.properties and reaches the app through
-// BuildConfig, so no key is ever committed in a source file.
+// The Android client talks only to the development proxy running on the Mac.
+// The OpenAI key is read by that proxy and is never compiled into the APK.
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
-// trim(): a stray space after '=' in local.properties would otherwise ride
-// along into the auth header and 401 on every call.
-val sarvamApiKey: String = localProps.getProperty("sarvam.api.key", "").trim()
+val openAiBaseUrl: String = localProps
+    .getProperty("openai.base.url", "http://127.0.0.1:8787/v1")
+    .trim()
+    .trimEnd('/')
 
 android {
     namespace = "com.screensaathi"
@@ -33,7 +34,7 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        buildConfigField("String", "SARVAM_API_KEY", "\"$sarvamApiKey\"")
+        buildConfigField("String", "OPENAI_BASE_URL", "\"$openAiBaseUrl\"")
     }
 
     buildTypes {

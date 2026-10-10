@@ -63,18 +63,21 @@ object IntentClassifier {
      */
     private val TRANSLATION = listOf(
         "translate", "translation", "in english", "in hindi", "in tamil",
+        "переведи", "перевод", "по-русски", "на русский", "на английский",
         "अनुवाद", "ट्रांसलेट", "मतलब क्या",
         "மொழிபெயர்", "தமிழில்",
     )
 
     private val COMPARISON = listOf(
         "compare", "cheaper", "better than", "difference between", "versus", " vs ",
+        "сравни", "дешевле", "дороже", "лучше чем", "разница между",
         "तुलना", "सस्ता", "से बेहतर",
         "ஒப்பிட", "மலிவான",
     )
 
     private val EXPLANATION = listOf(
         "explain", "why is", "why does", "why am", "what does this mean",
+        "объясни", "почему", "что это значит", "что означает",
         "समझाओ", "समझाइए", "क्यों",
         "விளக்க", "ஏன்",
     )
@@ -86,6 +89,8 @@ object IntentClassifier {
         // ACTION because it asks to be guided, not for the step to be taken.
         "help me use", "help me with", "help me do", "walk me through",
         "show me how", "use this", "use it",
+        "как мне", "как это", "как использовать", "помоги использовать",
+        "покажи как", "научи меня",
         "कैसे करूँ", "कैसे इस्तेमाल", "कैसे उपयोग",
         // Compound only. A bare "मदद करो" / "உதவுங்கள்" is just "help me",
         // which pairs with any verb — "इसे बुक करने में मदद करो" is a booking
@@ -98,12 +103,15 @@ object IntentClassifier {
     private val INFORMATION = listOf(
         "what is", "what's", "what are", "how much", "how many", "when is",
         "who is", "where is this from", "price of", "cost of",
+        "что это", "что здесь", "что на экране", "сколько", "какая цена",
+        "когда", "кто это", "откуда",
         "क्या है", "कितना", "कब है", "कौन",
         "என்ன", "எவ்வளவு", "எப்போது",
     )
 
     private val NAVIGATION = listOf(
         "open this", "open it", "go to", "take me to", "find where", "show me where",
+        "открой", "перейди", "покажи где", "найди где", "веди к",
         "खोलो", "खोलिए", "ले चलो", "कहाँ है",
         "திற", "எங்கே",
     )
@@ -111,6 +119,8 @@ object IntentClassifier {
     private val ACTION = listOf(
         "book", "pay", "buy", "order", "apply", "send", "submit", "recharge",
         "cancel", "confirm", "checkout", "purchase", "fill",
+        "закажи", "оплати", "купи", "отправь", "подтверди", "заполни",
+        "отмени", "пополни",
         "बुक", "भुगतान", "पैसे", "खरीद", "ऑर्डर", "आवेदन", "भेज", "भर",
         "புக்", "பணம்", "வாங்க", "ஆர்டர்", "அனுப்ப", "நிரப்ப",
     )

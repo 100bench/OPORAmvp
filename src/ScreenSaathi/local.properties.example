@@ -1,5 +1,9 @@
 # Copy this file to local.properties and set the path to your Android SDK.
 sdk.dir=C\:/path/to/Android/Sdk
 
-# Optional: without this key, ScreenSaathi uses its deterministic offline fallback.
-sarvam.api.key=
+# Read only by scripts/openai_proxy.py on the development computer. It is not
+# compiled into the APK.
+openai.api.key=
+
+# Android reaches this localhost address through `adb reverse` over USB.
+openai.base.url=http://127.0.0.1:8787/v1

@@ -11,11 +11,13 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.view.accessibility.AccessibilityManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.screensaathi.opora.OporaSettings
 
 /**
  * Setup gateway only. Grants the three permissions, lets the user open the demo
@@ -25,10 +27,7 @@ import androidx.core.content.ContextCompat
 class MainActivity : AppCompatActivity() {
 
     private val micRequest = 101
-
-    private companion object {
-        const val EXTRA_ACTION = "saathi_action"
-    }
+    private val callRequest = 102
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,74 +52,37 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        findViewById<Button>(R.id.btn_call).setOnClickListener {
+            if (!hasCallPermission()) {
+                ActivityCompat.requestPermissions(
+                    this, arrayOf(Manifest.permission.CALL_PHONE), callRequest
+                )
+            }
+        }
+
         findViewById<Button>(R.id.btn_accessibility).setOnClickListener {
             explainAccessibilityThenOpenSettings()
         }
 
+        val saved = OporaSettings.load(this)
+        findViewById<EditText>(R.id.contact_name).setText(saved.contactName)
+        findViewById<EditText>(R.id.contact_phone).setText(saved.contactPhone)
+
+        findViewById<Button>(R.id.btn_save_targets).setOnClickListener { saveContact() }
+
         findViewById<Button>(R.id.btn_start).setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
-                toast("Grant 'display over other apps' first.")
+                toast("Сначала разрешите показ поверх других приложений.")
                 return@setOnClickListener
             }
             OverlayService.start(this)
             moveTaskToBack(true)
-        }
-
-        findViewById<Button>(R.id.btn_demo).setOnClickListener {
-            startActivity(Intent(this, DemoTaskActivity::class.java))
-        }
-
-        // Rehearsal triggers: identical path to a spoken request, minus STT.
-        mapOf(
-            R.id.btn_taxi_en to "en-IN",
-            R.id.btn_taxi_hi to "hi-IN",
-            R.id.btn_taxi_ta to "ta-IN",
-        ).forEach { (id, language) ->
-            findViewById<Button>(id).setOnClickListener {
-                if (!Settings.canDrawOverlays(this)) {
-                    toast("Grant 'display over other apps' first.")
-                    return@setOnClickListener
-                }
-                OverlayService.runTask(this, "book_taxi", language)
-                moveTaskToBack(true)
-            }
         }
     }
 
     override fun onResume() {
         super.onResume()
         refreshStatus()
-        handleRehearsalIntent(intent)
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-    }
-
-    /**
-     * Lets a rehearsal be driven from outside — `adb shell am start ... --es
-     * saathi_action run|choose`. OverlayService is not exported (it must not
-     * be), so this exported activity is the only door in. It forwards and gets
-     * straight back out of the way.
-     */
-    private fun handleRehearsalIntent(intent: Intent?) {
-        val action = intent?.getStringExtra(EXTRA_ACTION) ?: return
-        when (action) {
-            "run" -> {
-                val task = intent.getStringExtra("task") ?: "book_taxi"
-                val language = intent.getStringExtra("language") ?: "en-IN"
-                OverlayService.runTask(this, task, language)
-            }
-            "choose" -> OverlayService.choose(this, intent.getIntExtra("choice", 0))
-            // adb: am start -n com.screensaathi/.MainActivity --es saathi_action highlight --es query "Wi-Fi"
-            "highlight" -> {
-                val q = intent.getStringExtra("query").orEmpty()
-                if (q.isNotBlank()) OverlayService.highlight(this, q)
-            }
-        }
-        intent.removeExtra(EXTRA_ACTION)
-        finish()
     }
 
     /**
@@ -133,21 +95,21 @@ class MainActivity : AppCompatActivity() {
      */
     private fun explainAccessibilityThenOpenSettings() {
         AlertDialog.Builder(this)
-            .setTitle("Why ScreenSaathi needs this")
+            .setTitle("Зачем нужен доступ к экрану")
             .setMessage(
-                "This lets the app read the text and layout of the screen " +
-                    "you're currently looking at, so it can point at the right " +
-                    "field and button.\n\n" +
-                    "It reads the foreground app only, as text — never a " +
-                    "screenshot, never other apps in the background. That text " +
-                    "is sent to Sarvam's cloud service to decide what to say next.\n\n" +
-                    "On the next screen, find ScreenSaathi under Downloaded " +
-                    "apps or Installed apps and turn it on."
+                "Приложение сможет читать текст и структуру текущего экрана, " +
+                    "чтобы подсвечивать нужные поля и кнопки.\n\n" +
+                    "Оно читает только открытое приложение в виде текста: " +
+                    "не просматривает фоновые приложения; снимок экрана требует " +
+                    "отдельного действия пользователя. " +
+                    "Текст отправляется AI-сервису для выбора следующей подсказки.\n\n" +
+                    "На следующем экране найдите «Опору» в списке установленных " +
+                    "служб и включите его."
             )
-            .setPositiveButton("Continue") { _, _ ->
+            .setPositiveButton("Продолжить") { _, _ ->
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
-            .setNegativeButton("Not now", null)
+            .setNegativeButton("Не сейчас", null)
             .show()
     }
 
@@ -155,13 +117,36 @@ class MainActivity : AppCompatActivity() {
         val overlay = if (Settings.canDrawOverlays(this)) "✓" else "✗"
         val mic = if (hasMic()) "✓" else "✗"
         val acc = if (isAccessibilityEnabled()) "✓" else "✗"
+        val call = if (hasCallPermission()) "✓" else "✗"
         findViewById<TextView>(R.id.setup_status).text =
-            "Overlay $overlay   Mic $mic   Screen reader $acc"
+            "Поверх окон $overlay   Микрофон $mic\nЧтение экрана $acc   Звонки $call"
     }
 
     private fun hasMic(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
+
+    private fun hasCallPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun saveContact() {
+        val contactName = findViewById<EditText>(R.id.contact_name).text.toString().trim()
+        val rawPhone = findViewById<EditText>(R.id.contact_phone).text.toString()
+        val phone = OporaSettings.normalizedPhone(rawPhone)
+        when {
+            contactName.isBlank() -> toast("Введите имя контакта.")
+            phone == null -> toast("Введите обычный номер из 7–15 цифр. USSD и экстренные номера запрещены.")
+            else -> {
+                OporaSettings.save(
+                    this,
+                    OporaSettings(contactName, phone),
+                )
+                findViewById<EditText>(R.id.contact_phone).setText(phone)
+                toast("Контакт сохранён только на этом телефоне.")
+            }
+        }
+    }
 
     private fun isAccessibilityEnabled(): Boolean {
         val expected = "$packageName/$packageName.ScreenReaderService"

@@ -6,6 +6,9 @@
     "help me pay this bill",
     "pay my electricity bill",
     "i want to pay the bill",
+    "помоги оплатить счёт",
+    "хочу оплатить электричество",
+    "оплатить квитанцию",
     "bijli ka bill bharna hai",
     "mujhe bill pay karna hai",
     "बिजली का बिल भरना है",
@@ -18,6 +21,7 @@
       "resource_id": "amount_field",
       "instruction": "Enter the bill amount in this box.",
       "instructions": {
+        "ru-RU": "Введите сумму счёта в это поле.",
         "hi-IN": "इस बॉक्स में बिल की रकम भरिए।"
       },
       "expects_value": true,
@@ -28,6 +32,7 @@
       "resource_id": "account_field",
       "instruction": "Now type your account number here.",
       "instructions": {
+        "ru-RU": "Теперь введите номер лицевого счёта.",
         "hi-IN": "अब यहाँ अपना अकाउंट नंबर लिखिए।"
       },
       "expects_value": true,
@@ -38,6 +43,7 @@
       "resource_id": "submit_button",
       "instruction": "Tap this button to pay the bill.",
       "instructions": {
+        "ru-RU": "Нажмите эту кнопку, чтобы оплатить счёт.",
         "hi-IN": "बिल भरने के लिए यह बटन दबाइए।"
       },
       "expects_value": false,

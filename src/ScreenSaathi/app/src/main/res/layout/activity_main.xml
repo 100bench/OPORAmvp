@@ -14,7 +14,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="ScreenSaathi"
+            android:text="Опора"
             android:textColor="@color/saathi_text"
             android:textSize="30sp"
             android:textStyle="bold" />
@@ -22,7 +22,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="One-time setup. Grant these, then the assistant lives as a floating pill."
+            android:text="Помощник ориентируется по открытому экрану. Контакт ниже нужен только для звонка и на работу подсказок не влияет."
             android:textColor="@color/saathi_text_dim"
             android:textSize="15sp"
             android:paddingTop="6dp"
@@ -32,7 +32,7 @@
             android:id="@+id/btn_overlay"
             android:layout_width="match_parent"
             android:layout_height="54dp"
-            android:text="1. Allow display over other apps"
+            android:text="1. Разрешить показ поверх окон"
             android:textColor="#FFFFFFFF"
             android:backgroundTint="@color/saathi_accent" />
 
@@ -41,7 +41,7 @@
             android:layout_width="match_parent"
             android:layout_height="54dp"
             android:layout_marginTop="12dp"
-            android:text="2. Allow microphone"
+            android:text="2. Разрешить микрофон"
             android:textColor="#FFFFFFFF"
             android:backgroundTint="@color/saathi_accent" />
 
@@ -50,69 +50,68 @@
             android:layout_width="match_parent"
             android:layout_height="54dp"
             android:layout_marginTop="12dp"
-            android:text="3. Turn on ScreenSaathi screen reader"
+            android:text="3. Включить чтение экрана"
             android:textColor="#FFFFFFFF"
             android:backgroundTint="@color/saathi_accent" />
+
+        <Button
+            android:id="@+id/btn_call"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginTop="12dp"
+            android:text="4. Разрешить звонок после подтверждения"
+            android:textColor="#FFFFFFFF"
+            android:backgroundTint="@color/saathi_accent" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="Контакт для звонка (необязательно)"
+            android:textColor="@color/saathi_text"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/contact_name"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/field_bg"
+            android:hint="Имя контакта, например Мама"
+            android:inputType="textPersonName"
+            android:paddingHorizontal="14dp"
+            android:textColor="#FF101010"
+            android:textColorHint="#88101010" />
+
+        <EditText
+            android:id="@+id/contact_phone"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/field_bg"
+            android:hint="Телефон, например +79991234567"
+            android:inputType="phone"
+            android:paddingHorizontal="14dp"
+            android:textColor="#FF101010"
+            android:textColorHint="#88101010" />
+
+        <Button
+            android:id="@+id/btn_save_targets"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginTop="10dp"
+            android:text="Сохранить контакт" />
 
         <Button
             android:id="@+id/btn_start"
             android:layout_width="match_parent"
             android:layout_height="60dp"
             android:layout_marginTop="28dp"
-            android:text="Start assistant"
+            android:text="Запустить помощника"
             android:textStyle="bold"
             android:textColor="#FF0B0B0F"
             android:backgroundTint="@color/saathi_highlight" />
-
-        <!-- Rehearsal: run a task without speaking. Same engine, overlay and
-             cursor as a spoken request, minus STT — for a room too loud to
-             trust a microphone. -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Rehearse without speaking"
-            android:textColor="@color/saathi_text_dim"
-            android:textSize="13sp"
-            android:paddingTop="22dp"
-            android:paddingBottom="6dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btn_taxi_en"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="Taxi EN" />
-
-            <Button
-                android:id="@+id/btn_taxi_hi"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:text="टैक्सी HI" />
-
-            <Button
-                android:id="@+id/btn_taxi_ta"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:text="டாக்ஸி TA" />
-        </LinearLayout>
-
-        <Button
-            android:id="@+id/btn_demo"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="12dp"
-            android:text="Open demo screen (Pay Bill)"
-            android:textColor="@color/saathi_text"
-            android:backgroundTint="#33FFFFFF" />
 
         <TextView
             android:id="@+id/setup_status"

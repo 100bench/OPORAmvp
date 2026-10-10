@@ -6,7 +6,7 @@ substantial lives in `docs/`, linked below; don't duplicate it here.
 
 ## What this project is
 
-An Android accessibility overlay that listens (Sarvam STT), reads the live
+An Android accessibility overlay that listens (OpenAI STT), reads the live
 screen through `AccessibilityService`, resolves the actual UI element the user
 needs, draws a ring around it, and waits for the user to tap it themselves. It
 does not act on the user's behalf — it points.
@@ -15,7 +15,7 @@ does not act on the user's behalf — it points.
 
 ```bash
 cd src/ScreenSaathi
-cp local.properties.example local.properties   # set sdk.dir; sarvam.api.key optional
+cp local.properties.example local.properties   # set sdk.dir and openai.api.key
 ./gradlew testDebugUnitTest                     # baseline: must be green before AND after your change
 ./gradlew assembleDebug
 ```
@@ -73,7 +73,7 @@ on the same device. `docs/DEVELOPMENT.md` has the exact `adb` commands.
 
 ## Known gaps, intentionally not addressed here
 
-- No AI-provider abstraction yet — Sarvam is called directly from
+- No AI-provider abstraction yet — OpenAI is called directly from the legacy
   `sarvam/SarvamPlanner.kt`, not behind an interface. Worth doing before adding
   a second provider; not done because it risked the working demo pipeline
   under time pressure. See `docs/DECISIONS.md`.

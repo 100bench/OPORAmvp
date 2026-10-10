@@ -3,27 +3,13 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- CALL_PHONE is used only after a fresh, one-time confirmation for the
+         single contact configured locally by the user. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
     <!-- The whole product is a floating overlay; without this there is no UI. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-
-    <!--
-      Universal app discovery (Android 11+ package visibility).
-
-      This replaced a seven-package allow-list, which made the assistant
-      structurally incapable of its own core function: any app outside that list
-      was invisible, so "open WhatsApp" could only ever fail, and DeviceContext
-      correctly but uselessly reported UNKNOWN for nearly everything installed.
-
-      QUERY_ALL_PACKAGES is a Play-policy restricted permission. The
-      justification here is that app discovery IS the user-facing feature — the
-      user names an app and the assistant must determine whether it exists — and
-      a Play submission would have to declare exactly that. Nothing leaves the
-      device: the inventory is read on-device and only a compact, capped list of
-      labels ever reaches the model (see DeviceContext.toPromptText).
-    -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <queries>
         <intent>
@@ -36,6 +22,7 @@
         android:name=".SaathiApp"
         android:allowBackup="false"
         android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.ScreenSaathi">
 
@@ -48,33 +35,6 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <!--
-          ScreenSaathi as the home screen.
-
-          Opt-in by construction: declaring CATEGORY_HOME only makes the app
-          *eligible*; Android routes HOME here solely if the user selects
-          ScreenSaathi as their default launcher. A user who never does is
-          unaffected, and MainActivity remains the normal entry point.
-
-          stateUnchanged/adjustPan and the excludeFromRecents/singleTask combo
-          are the standard launcher posture — a home screen should not stack
-          instances or appear in Recents as if it were an ordinary app.
-        -->
-        <activity
-            android:name=".launcher.LauncherActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:excludeFromRecents="true"
-            android:stateNotNeeded="true"
-            android:windowSoftInputMode="stateUnchanged|adjustPan"
-            android:theme="@style/Theme.ScreenSaathi">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.HOME" />
-                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

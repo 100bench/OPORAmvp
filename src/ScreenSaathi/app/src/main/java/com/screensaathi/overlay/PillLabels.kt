@@ -15,12 +15,21 @@ import com.screensaathi.sarvam.Language
 object PillLabels {
 
     private val EN = mapOf(
-        PillState.IDLE to "ScreenSaathi",
+        PillState.IDLE to "Opora",
         PillState.LISTENING to "Listening…",
         PillState.THINKING to "Thinking…",
         PillState.SPEAKING to "Speaking…",
         PillState.GUIDING to "Guiding you",
         PillState.ERROR to "Let's try again",
+    )
+
+    private val RU = mapOf(
+        PillState.IDLE to "Опора",
+        PillState.LISTENING to "Слушаю…",
+        PillState.THINKING to "Думаю…",
+        PillState.SPEAKING to "Говорю…",
+        PillState.GUIDING to "Подсказываю",
+        PillState.ERROR to "Попробуем ещё раз",
     )
 
     private val HI = mapOf(
@@ -41,7 +50,12 @@ object PillLabels {
         PillState.ERROR to "மீண்டும் முயற்சிக்கலாம்",
     )
 
-    private val BY_LANGUAGE = mapOf("en-IN" to EN, "hi-IN" to HI, "ta-IN" to TA)
+    private val BY_LANGUAGE = mapOf(
+        "ru-RU" to RU,
+        "en-IN" to EN,
+        "hi-IN" to HI,
+        "ta-IN" to TA,
+    )
 
     fun forState(state: PillState, language: String): String {
         val table = BY_LANGUAGE[Language.normalize(language)] ?: EN

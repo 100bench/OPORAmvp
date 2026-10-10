@@ -13,7 +13,7 @@ import com.screensaathi.sarvam.Spoken
  * keyed by language, and each lookup reports which language it actually found
  * so TTS is never asked to speak English text as `hi-IN`.
  *
- * English and Hindi are authored for the demo; any other detected language
+ * Russian, English, Hindi and Tamil are authored for the demo; any other detected language
  * falls back to English text *labelled as English*, which is degraded but
  * always speakable. Adding a language is adding a column here.
  */
@@ -90,6 +90,30 @@ object Phrases {
         Key.CIRCLE_CLARIFY to "I've got \"%s\". Would you like to know about it, or shall I help you use it?",
     )
 
+    private val RU = mapOf(
+        Key.LISTENING to "Слушаю… когда закончите, нажмите на микрофон ещё раз.",
+        Key.THINKING to "Секунду…",
+        Key.DIDNT_CATCH to "Не удалось разобрать речь — давайте начнём отсюда.",
+        Key.HOLD_LONGER to "Не удалось вас услышать — говорите немного дольше.",
+        Key.MIC_OFF to "Нет доступа к микрофону. Я всё равно буду подсказывать по шагам.",
+        Key.ALL_DONE to "Это был последний шаг — всё готово!",
+        Key.STOPPED to "Остановлено. Нажмите на микрофон, когда захотите продолжить.",
+        Key.RESUMED to "Продолжим с того места, где остановились.",
+        Key.NO_TASKS to "Нет доступных сценариев.",
+        Key.TAP_MIC to "Нажмите на микрофон и скажите, что нужно сделать.",
+        Key.CHOOSE_APP to "Какое приложение вы хотите использовать?",
+        Key.OPENING_APP to "Открываю %s…",
+        Key.APP_WONT_OPEN to "Не удалось открыть это приложение. Выберите другое.",
+        Key.NO_RIDE_APPS to "На этом телефоне нет приложений для заказа такси.",
+        Key.CIRCLE_HINT to "Обведите нужный объект на экране",
+        Key.CIRCLE_FOUND to "Я нашёл: «%s».",
+        Key.CIRCLE_SELECTED_TEXT to "На экране написано: «%s».",
+        Key.CIRCLE_NEEDS_VISION to "Я вижу выбранную область, но UI-дерево не содержит описания её содержимого.",
+        Key.CIRCLE_NOTHING_FOUND to "В этой области ничего не удалось прочитать. Попробуйте обвести кнопку или текст.",
+        Key.CIRCLE_ASK to "Нажмите на микрофон и задайте вопрос об этом объекте.",
+        Key.CIRCLE_CLARIFY to "Вы выбрали «%s». Рассказать об этом или помочь использовать?",
+    )
+
     private val HI = mapOf(
         Key.LISTENING to "सुन रहा हूँ… बोलकर फिर से माइक दबाइए।",
         Key.THINKING to "एक पल…",
@@ -139,6 +163,7 @@ object Phrases {
     )
 
     private val BY_LANGUAGE = mapOf(
+        "ru-RU" to RU,
         "en-IN" to EN,
         "hi-IN" to HI,
         "ta-IN" to TA,

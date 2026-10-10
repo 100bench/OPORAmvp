@@ -3,34 +3,31 @@ package com.screensaathi.sarvam
 /**
  * The languages ScreenSaathi will speak, and the rules for choosing one.
  *
- * The list is not aspirational — every code here was verified end to end
- * against live Sarvam on 2026-07-26 by `scripts/smoke_languages.ps1`: Bulbul v3
- * synthesised the language with speaker `anand`, and Saaras v3 detected it back
- * correctly from the resulting audio. Re-run that script before adding a code.
+ * The list is the set currently exposed by the app and its planner contract.
+ * Keep the planner schema, UI choices, and language reconciliation in sync
+ * when adding a code.
  */
 object Language {
 
+    /** Product language for the Russian MVP. */
+    const val APP_DEFAULT = "ru-RU"
+
     /**
      * Used when nothing has been detected yet, and for any text we only
-     * authored in English. English is the safe default because an English
-     * string sent with a non-English `target_language_code` is rejected by
-     * Bulbul outright:
-     *
-     *     "Text must contain at least one character from the allowed languages."
-     *
-     * That is the whole reason [Spoken] carries its own language: the code sent
-     * to TTS has to describe the *text*, not the user's spoken language.
+     * authored in English. [Spoken] carries a language with its text so both
+     * the planner and the speech instruction can stay explicit.
      */
     const val DEFAULT = "en-IN"
 
-    /** Verified Bulbul-speakable / Saaras-detectable. See the smoke script. */
+    /** Languages currently supported by the app's UI and planner contract. */
     val SUPPORTED = linkedSetOf(
-        "en-IN", "hi-IN", "bn-IN", "gu-IN", "kn-IN",
+        "ru-RU", "en-IN", "hi-IN", "bn-IN", "gu-IN", "kn-IN",
         "ml-IN", "mr-IN", "pa-IN", "ta-IN", "te-IN",
     )
 
     /** Endonyms — what a speaker calls their own language. Used in the UI. */
     private val NATIVE_NAME = mapOf(
+        "ru-RU" to "Русский",
         "en-IN" to "English",
         "hi-IN" to "हिन्दी",
         "bn-IN" to "বাংলা",
@@ -44,12 +41,11 @@ object Language {
     )
 
     /**
-     * Coerce whatever Saaras or the planner hands us into a code we know we can
-     * speak. Accepts a bare tag ("hi") as well as a full one ("hi-IN"), because
+     * Coerce whatever STT or the planner hands us into a code we support.
+     * Accepts a bare tag ("hi") as well as a full one ("hi-IN"), because
      * the planner is a language model and will occasionally shorten it.
      *
-     * An unrecognised code silently became a 400 from Bulbul and the app went
-     * mute with no explanation, so everything funnels through here.
+     * everything funnels through here before reaching the UI or speech layer.
      */
     fun normalize(code: String?): String {
         val raw = code?.trim()?.replace('_', '-') ?: return DEFAULT
@@ -67,6 +63,7 @@ object Language {
 
     /** Script each language is actually written in. Hindi and Marathi share one. */
     private val SCRIPT = mapOf(
+        "ru-RU" to Character.UnicodeScript.CYRILLIC,
         "en-IN" to Character.UnicodeScript.LATIN,
         "hi-IN" to Character.UnicodeScript.DEVANAGARI,
         "mr-IN" to Character.UnicodeScript.DEVANAGARI,
@@ -108,18 +105,13 @@ object Language {
     }
 
     /**
-     * The language code it is actually safe to send to Bulbul for [text].
-     *
-     * Bulbul rejects a text/code mismatch outright —
-     * "Text must contain at least one character from the allowed languages" —
-     * and a rejected call means the app just goes silent with no explanation.
-     * The planner is a language model, so it will sometimes label romanised
+     * The language code that best matches [text]. The planner can sometimes label romanised
      * Hindi as `hi-IN`, or answer in English while claiming the user's language.
      *
-     * The rule follows Bulbul's own: **presence, not majority**.
+     * The rule uses **presence, not majority**.
      *  - If the claimed language's script appears at all, keep the claim. This
      *    is what makes code-switching work — "amount यहाँ भरिए" stays `hi-IN`,
-     *    and Bulbul reads the embedded English word naturally.
+     *    and TTS reads the embedded English word naturally.
      *  - Otherwise fall to whichever Indic script is actually there, so
      *    Devanagari labelled `en-IN` is corrected rather than mispronounced.
      *  - Failing that, romanised or English text becomes `en-IN`.
@@ -131,11 +123,11 @@ object Language {
 
         SCRIPT[claim]?.let { if (present.containsKey(it)) return claim }
 
-        val indic = present.entries
+        val nonLatin = present.entries
             .filter { it.key != Character.UnicodeScript.LATIN }
             .maxByOrNull { it.value }
             ?.key
-        if (indic != null) CODE_FOR_SCRIPT[indic]?.let { return it }
+        if (nonLatin != null) CODE_FOR_SCRIPT[nonLatin]?.let { return it }
 
         return DEFAULT
     }

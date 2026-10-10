@@ -14,6 +14,13 @@ import org.junit.Test
 class PhrasesTest {
 
     @Test
+    fun `Russian is answered in Russian`() {
+        val p = Phrases.get(Phrases.Key.LISTENING, "ru-RU")
+        assertEquals("ru-RU", p.language)
+        assertTrue("expected Cyrillic", p.text.any { it.code in 0x0400..0x04FF })
+    }
+
+    @Test
     fun `Hindi is answered in Hindi`() {
         val p = Phrases.get(Phrases.Key.LISTENING, "hi-IN")
         assertEquals("hi-IN", p.language)

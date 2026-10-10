@@ -9,23 +9,23 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONObject
 
 /**
- * Saaras v3 speech-to-text (contracts: the STT surface).
- * POST multipart to /speech-to-text. Returns transcript + detected language,
- * or null on any failure so the caller can fall back cleanly.
+ * OpenAI speech-to-text. POSTs a WAV file to /audio/transcriptions and returns
+ * its text plus detected language, or null so the caller can fall back cleanly.
  *
  * Latency budget: < 800 ms. Keep the recorded clip short.
  */
 class SarvamStt {
 
     data class Result(val transcript: String, val languageCode: String?) {
-        /** Detected language, or the safe default when Saaras did not say. */
-        val language: String get() = Language.normalize(languageCode)
+        /** Prefer Russian and also infer it from Cyrillic if metadata is absent. */
+        val language: String
+            get() = Language.reconcile(transcript, languageCode ?: Language.APP_DEFAULT)
     }
 
     /** Blocking. Call off the main thread. */
-    fun transcribe(wav: File, mode: String = "transcribe"): Result? {
-        if (!Sarvam.hasKey()) {
-            Log.w(TAG, "No Sarvam key set — STT unavailable")
+    fun transcribe(wav: File): Result? {
+        if (!Sarvam.isConfigured()) {
+            Log.w(TAG, "No AI gateway configured — STT unavailable")
             return null
         }
         if (!wav.exists() || wav.length() == 0L) {
@@ -35,8 +35,10 @@ class SarvamStt {
         val body = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("model", Sarvam.STT_MODEL)
-            .addFormDataPart("mode", mode)
-            .addFormDataPart("language_code", "unknown")
+            // This build is Russian-first. The hint improves recognition and
+            // prevents a short noisy utterance being classified as Hindi.
+            .addFormDataPart("languages[]", "ru")
+            .addFormDataPart("prompt", "Речь на русском языке о действиях на экране Android.")
             .addFormDataPart(
                 "file", "audio.wav",
                 wav.asRequestBody("audio/wav".toMediaTypeOrNull())
@@ -45,7 +47,6 @@ class SarvamStt {
 
         val req = Request.Builder()
             .url(Sarvam.STT_URL)
-            .addHeader(Sarvam.AUTH_HEADER, Sarvam.apiKey)
             .post(body)
             .build()
 
@@ -57,18 +58,21 @@ class SarvamStt {
                     return null
                 }
                 val json = JSONObject(raw)
-                val transcript = json.optString("transcript", "")
+                val transcript = json.optString("text", "")
                 if (transcript.isBlank()) return null
-                // Saaras returns the language in the speaker's own script
-                // ("hi-IN" for Devanagari output). Normalize immediately so a
-                // code we cannot speak never travels further into the app.
-                val detected = json.optString("language_code")
+                // gpt-transcribe returns an ISO language code in `languages`.
+                // Accept legacy fields too, which also makes this parser
+                // tolerant of compatible gateways.
+                val detected = (
+                    json.optJSONArray("languages")?.optJSONObject(0)?.optString("code")
+                        ?: json.optString("language", json.optString("language_code"))
+                    )
                     .takeIf { it.isNotBlank() }
                     ?.let { Language.normalize(it) }
                 Result(transcript, detected)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "STT failed: ${e.message}")
+            Log.w(TAG, "STT failed (${e.javaClass.simpleName}): ${e.message}", e)
             null
         }
     }

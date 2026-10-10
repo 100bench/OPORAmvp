@@ -125,10 +125,10 @@ class ModelRouter(
                 if (realtime?.isAvailable == true) {
                     Route.Provider(realtime, "realtime provider available")
                 } else {
-                    // Sarvam STT/TTS is the shipping voice path and is not a
+                    // OpenAI STT/TTS is the shipping voice path and is not a
                     // realtime provider; it is driven directly by
                     // SessionController rather than through this router.
-                    Route.OnDevice("existing Sarvam STT/TTS path")
+                    Route.OnDevice("existing OpenAI STT/TTS path")
                 }
             }
         }

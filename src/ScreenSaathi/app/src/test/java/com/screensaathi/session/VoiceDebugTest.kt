@@ -55,7 +55,7 @@ class VoiceDebugTest {
 
     @Test
     fun `a partial turn renders only what it knows`() {
-        val panel = VoiceDebug(note = "no Sarvam key — deterministic path").toPanel()
-        assertEquals("note: no Sarvam key — deterministic path", panel)
+        val panel = VoiceDebug(note = "no OpenAI key — deterministic path").toPanel()
+        assertEquals("note: no OpenAI key — deterministic path", panel)
     }
 }

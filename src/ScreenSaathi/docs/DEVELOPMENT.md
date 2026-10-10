@@ -10,13 +10,11 @@ itself is not required — the wrapper is committed.
 ```bash
 cd src/ScreenSaathi
 cp local.properties.example local.properties
-# edit local.properties: set sdk.dir; sarvam.api.key is optional (see below)
+# edit local.properties: set sdk.dir and openai.api.key
 ```
 
-`sarvam.api.key` (from [dashboard.sarvam.ai](https://dashboard.sarvam.ai)) is
-only needed for live voice. Without it, the project still builds, installs
-and runs — `StepEngine` completes tasks deterministically, no network
-required.
+The key stays on the development computer. It is read by the small local
+gateway in `scripts/openai_proxy.py` and is never compiled into the APK.
 
 ## Build
 
@@ -32,7 +30,7 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`
 ./gradlew testDebugUnitTest       # JVM only, no device
 ```
 
-3 tests are `replay_only` fixtures that skip without a live Sarvam key — this
+3 tests are `replay_only` fixtures that skip without a live provider key — this
 is expected, not a failure.
 
 ## Install and run on a device
@@ -47,6 +45,28 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 Then, on the device: open ScreenSaathi → grant microphone → grant "display
 over other apps" → enable the Accessibility Service → tap **Start assistant**.
 
+## Route AI requests through the development computer
+
+This is the normal live-AI setup for a physical phone connected over USB. The
+phone does not need its own VPN and does not need root.
+
+In terminal 1:
+
+```bash
+python3 scripts/openai_proxy.py
+```
+
+In terminal 2:
+
+```bash
+adb reverse tcp:8787 tcp:8787
+adb reverse --list
+```
+
+Leave the proxy running while testing. `adb reverse` lasts only while the USB
+device is connected (and may need to be repeated after reconnecting). The
+proxy listens only on Mac loopback, so it is not exposed to the local network.
+
 ## Debugging on-device
 
 ```bash
@@ -58,6 +78,9 @@ adb logcat -s TargetResolver:*
 
 # Session/turn/highlight state
 adb logcat -s SessionController:*
+
+# OpenAI planner/STT/TTS transport errors
+adb logcat -s SarvamPlanner:* SarvamStt:* SarvamTts:*
 
 # Confirm exactly 2 overlay windows (highlight layer + pill) — more means a
 # duplicate registration, fewer means the service isn't running

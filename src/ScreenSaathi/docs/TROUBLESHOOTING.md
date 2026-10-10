@@ -9,7 +9,7 @@
 | Nothing gets highlighted | Settings → Accessibility → ScreenSaathi → Enable |
 | Stopped working after reinstall | Android disables the Accessibility Service on every reinstall. Re-enable it — this is platform behaviour, not a bug |
 | Home button doesn't open ScreenSaathi | Settings → Apps → Default apps → Home app → ScreenSaathi |
-| Nothing happens when speaking | Check network; confirm `sarvam.api.key` is set if you built from source |
+| Nothing happens when speaking | Keep `scripts/openai_proxy.py` running and repeat `adb reverse tcp:8787 tcp:8787` after reconnecting USB |
 
 ## For developers — misleading device state
 

@@ -62,7 +62,7 @@ Real on-device screenshots, captured this session — not mockups, not renders.
 ## How it works
 
 ```
-Voice  →  Intent (Sarvam STT + planner)  →  Screen perception (Accessibility API)
+Voice  →  Intent (OpenAI STT + planner)  →  Screen perception (Accessibility API)
        →  Target resolution (ranked, app-agnostic)  →  Visual highlight
        →  User taps it themselves  →  Screen-change detected  →  re-perceive  →  repeat
 ```
@@ -77,13 +77,13 @@ before you assume more than what's demonstrated above.
 
 ```mermaid
 flowchart TD
-    U([User speaks]) --> STT[Saaras STT<br/>transcript + language]
-    STT --> P[Sarvam-105B planner<br/>forced tool call]
+    U([User speaks]) --> STT[gpt-transcribe<br/>transcript + language]
+    STT --> P[gpt-6-luna planner<br/>forced tool call]
     R[ScreenReaderService<br/>read-only accessibility snapshot] --> P
     P -->|step + target + instruction<br/>+ language, all in the user's script| SC[SessionController]
     SC --> OV[OverlayService]
     OV --> HL[HighlightView<br/>cursor flies to target, ring blooms]
-    SC --> TTS[Bulbul TTS<br/>speaks the instruction back]
+    SC --> TTS[gpt-4o-mini-tts<br/>speaks the instruction back]
     P -.network fails / low confidence.-> SE[StepEngine<br/>deterministic fallback, no network]
     SE --> SC
 ```
@@ -94,9 +94,9 @@ Five pieces, and only five — this is a deliberate freeze, not an oversight:
 | --- | --- | --- |
 | Overlay pill | `OverlayService.kt`, `overlay/HighlightView.kt` | Renders an `OverlayCommand`. Never reasons. |
 | Screen reader | `ScreenReaderService.kt`, `screen/ScreenSnapshot.kt` | Read-only accessibility snapshot. No gestures. |
-| Saaras STT | `sarvam/SarvamStt.kt`, `sarvam/WavRecorder.kt` | 16 kHz mono WAV → transcript + language. |
-| Sarvam-105B planner | `sarvam/SarvamPlanner.kt` | Forced tool call → the frozen planner contract. |
-| Bulbul TTS | `sarvam/SarvamTts.kt`, `sarvam/AudioPlayer.kt` | Instruction → warm spoken audio (`anand`). |
+| OpenAI STT | `sarvam/SarvamStt.kt`, `sarvam/WavRecorder.kt` | `gpt-transcribe`: 16 kHz mono WAV → transcript + language. |
+| OpenAI planner | `sarvam/SarvamPlanner.kt` | `gpt-6-luna`: forced tool call → the frozen planner contract. |
+| OpenAI TTS | `sarvam/SarvamTts.kt`, `sarvam/AudioPlayer.kt` | `gpt-4o-mini-tts`: instruction → WAV audio (`marin`). |
 
 `session/SessionController.kt` orchestrates them. `session/StepEngine.kt` is the
 deterministic core that completes the task with **no network at all** — every
@@ -120,13 +120,13 @@ Create `local.properties` in the project root (it is gitignored):
 
 ```properties
 sdk.dir=C\:/path/to/Android/Sdk
-sarvam.api.key=sk_your_key_here
+openai.api.key=sk-your-key-here
 ```
 
-The key is read into `BuildConfig.SARVAM_API_KEY` at build time, so no key is
-ever hardcoded in a source file. **Without a key the app still runs** — every
-network step falls back to the deterministic `StepEngine`, which is what the
-offline demo path uses.
+The key is read only by the localhost development gateway and is never
+compiled into the APK. To test live AI on a USB-connected phone, run
+`python3 scripts/openai_proxy.py` and `adb reverse tcp:8787 tcp:8787`. See
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) for the exact flow.
 
 ```bash
 ./gradlew assembleDebug
@@ -170,7 +170,7 @@ demo.
 
 `ScreenReaderService` reads the on-screen content of whatever app is in the
 foreground and sends a text snapshot of it, plus recorded audio and spoken
-instructions, to `api.sarvam.ai`. No screen content, transcript, or audio is
+instructions, to `api.openai.com`. No screen content, transcript, or audio is
 persisted beyond a temporary `.wav` file deleted immediately after each call.
 Full accounting: [`SECURITY.md`](SECURITY.md) and
 [`docs/DATA_HANDLING.md`](docs/DATA_HANDLING.md).
@@ -195,13 +195,9 @@ rather than discovered by you later:
   their copy. There is no fallback matching strategy yet.
 - **No session persistence.** Closing the app loses your place; resuming
   after `Stop` only works within the same process lifetime.
-- **This has not yet been driven end-to-end by a real recorded human voice**
-  through the phone microphone in every language it claims to support — Saaras
-  STT, the planner, and Bulbul TTS are each verified live against the real
-  Sarvam API individually (`scripts/smoke_*.ps1`), and the full pipeline is
-  verified via the on-device rehearsal buttons, but a live microphone run in
-  Tamil specifically is still open. Don't take "multilingual" further than
-  that until it is.
+- **The OpenAI migration needs fresh physical-device multilingual QA.** Unit
+  tests cover the deterministic and parser code, but microphone, accessibility,
+  overlay, and spoken output must be checked together on a real Android phone.
 
 ## Contributing
 

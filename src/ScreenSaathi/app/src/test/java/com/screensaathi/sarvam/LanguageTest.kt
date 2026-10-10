@@ -21,6 +21,7 @@ class LanguageTest {
 
     @Test
     fun `a supported code passes through`() {
+        assertEquals("ru-RU", Language.normalize("ru-RU"))
         assertEquals("hi-IN", Language.normalize("hi-IN"))
         assertEquals("ta-IN", Language.normalize("ta-IN"))
     }
@@ -28,6 +29,7 @@ class LanguageTest {
     @Test
     fun `a bare tag is widened to the full code`() {
         // The planner is a language model; it shortens codes sometimes.
+        assertEquals("ru-RU", Language.normalize("ru"))
         assertEquals("hi-IN", Language.normalize("hi"))
         assertEquals("bn-IN", Language.normalize("bn"))
     }
@@ -59,6 +61,7 @@ class LanguageTest {
 
     @Test
     fun `an honest claim is kept`() {
+        assertEquals("ru-RU", Language.reconcile("Введите сумму счёта.", "ru-RU"))
         assertEquals("hi-IN", Language.reconcile("इस बॉक्स में रकम भरिए।", "hi-IN"))
         assertEquals("en-IN", Language.reconcile("Enter the amount here.", "en-IN"))
     }
@@ -101,6 +104,7 @@ class LanguageTest {
 
     @Test
     fun `each script maps to its own language`() {
+        assertEquals("ru-RU", Language.reconcile("Нажмите нужную кнопку.", "en-IN"))
         assertEquals("ta-IN", Language.reconcile("தொகையை உள்ளிடவும்.", "en-IN"))
         assertEquals("te-IN", Language.reconcile("మొత్తాన్ని నమోదు చేయండి.", "en-IN"))
         assertEquals("bn-IN", Language.reconcile("পরিমাণ লিখুন।", "en-IN"))
@@ -124,6 +128,7 @@ class LanguageTest {
 
     @Test
     fun `native names are endonyms`() {
+        assertEquals("Русский", Language.nativeName("ru-RU"))
         assertEquals("हिन्दी", Language.nativeName("hi-IN"))
         assertEquals("தமிழ்", Language.nativeName("ta-IN"))
         assertEquals("English", Language.nativeName("en-IN"))

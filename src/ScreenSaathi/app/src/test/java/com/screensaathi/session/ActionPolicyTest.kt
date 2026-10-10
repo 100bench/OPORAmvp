@@ -30,7 +30,11 @@ class ActionPolicyTest {
     }
 
     @Test
-    fun `high risk detection works in hindi and tamil`() {
+    fun `high risk detection works in Russian Hindi and Tamil`() {
+        assertEquals(
+            ActionPolicy.Level.HIGH_RISK_ACTION,
+            ActionPolicy.evaluate("Оплатить сейчас").level,
+        )
         assertEquals(
             ActionPolicy.Level.HIGH_RISK_ACTION,
             ActionPolicy.evaluate("अभी भुगतान करें").level,
@@ -69,6 +73,10 @@ class ActionPolicyTest {
         assertEquals(
             ActionPolicy.Level.BLOCKED_ACTION,
             ActionPolicy.evaluate("Show recovery phrase").level,
+        )
+        assertEquals(
+            ActionPolicy.Level.BLOCKED_ACTION,
+            ActionPolicy.evaluate("Разрешить доступ к службе специальных возможностей").level,
         )
     }
 

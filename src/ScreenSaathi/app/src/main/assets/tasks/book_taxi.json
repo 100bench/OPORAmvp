@@ -8,6 +8,9 @@
     "book a cab for me",
     "i need a ride",
     "call a taxi",
+    "закажи такси",
+    "хочу заказать такси",
+    "мне нужна машина",
     "mujhe taxi book karni hai",
     "taxi chahiye",
     "मुझे टैक्सी बुक करनी है",
@@ -25,6 +28,7 @@
       "resource_id": "",
       "instruction": "Which app would you like to use?",
       "instructions": {
+        "ru-RU": "Какое приложение для заказа такси вы хотите использовать?",
         "hi-IN": "आप कौन सा ऐप इस्तेमाल करना चाहेंगे?",
         "ta-IN": "எந்த ஆப்பைப் பயன்படுத்த விரும்புகிறீர்கள்?"
       },
@@ -37,6 +41,10 @@
       "text_any": [
         "Where to",
         "Where to?",
+        "Куда",
+        "Куда поедем?",
+        "Введите адрес",
+        "Адрес назначения",
         "Enter destination",
         "Drop location",
         "Enter drop",
@@ -45,6 +53,7 @@
       ],
       "instruction": "Tap here and type where you want to go.",
       "instructions": {
+        "ru-RU": "Нажмите сюда и введите адрес назначения.",
         "hi-IN": "यहाँ दबाइए और लिखिए आपको कहाँ जाना है।",
         "ta-IN": "இங்கே தட்டி, நீங்கள் எங்கு செல்ல வேண்டும் என்பதைத் தட்டச்சு செய்யுங்கள்."
       },
@@ -60,10 +69,15 @@
         "Request",
         "Choose",
         "Select",
-        "Continue"
+        "Continue",
+        "Подтвердить",
+        "Заказать",
+        "Выбрать",
+        "Продолжить"
       ],
       "instruction": "Now choose your ride and confirm it here.",
       "instructions": {
+        "ru-RU": "Выберите подходящую поездку и подтвердите заказ.",
         "hi-IN": "अब अपनी सवारी चुनिए और यहाँ पक्का कीजिए।",
         "ta-IN": "இப்போது உங்கள் பயணத்தைத் தேர்வுசெய்து இங்கே உறுதிசெய்யுங்கள்."
       },

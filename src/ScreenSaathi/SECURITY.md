@@ -25,10 +25,10 @@ buried:
   and skips its own overlay's views. It does **not** take screenshots and does
   **not** read arbitrary background apps — only the foreground window, only
   while the service is enabled.
-- That snapshot is sent, as text, to the Sarvam-105B planner API
+- That snapshot is sent, as text, to the `gpt-6-luna` planner API
   (`sarvam/SarvamPlanner.kt`) to decide which step and element to point at.
-  Recorded audio is sent to Saaras STT; the spoken instruction is sent to
-  Bulbul TTS. All three are outbound calls to `api.sarvam.ai` over HTTPS.
+  Recorded audio is sent to `gpt-transcribe`; the spoken instruction is sent
+  to `gpt-4o-mini-tts`. All three calls use `api.openai.com` over HTTPS.
 - No screen content, transcript, or audio is persisted to disk beyond the
   input `.wav` (deleted immediately after each STT call — see
   `SessionController.process()`) and no analytics, telemetry, or usage data is
@@ -41,9 +41,11 @@ qualified to write one — this document is not a substitute.
 
 ## Secrets
 
-The Sarvam API key lives only in a gitignored `local.properties` and reaches
-the app through `BuildConfig` at build time. CI runs `gitleaks` on every push
-and PR (see `.github/workflows/android.yml`) to catch a key landing in the
-tree by accident. If you find a real key committed anywhere in this repo's
-history, treat it as compromised and report it privately — rotating a key
-after the fact does not remove it from git history.
+The OpenAI API key lives only in a gitignored `local.properties` (or the Mac's
+`OPENAI_API_KEY` environment variable). The localhost development gateway
+reads it and injects authentication; the key is not compiled into the Android
+APK. CI runs `gitleaks` on every push and PR (see
+`.github/workflows/android.yml`) to catch a key landing in the tree by
+accident. If you find a real key committed anywhere in this repo's history,
+treat it as compromised and report it privately — rotating a key after the
+fact does not remove it from git history.

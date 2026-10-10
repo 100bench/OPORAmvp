@@ -37,7 +37,7 @@ behalf. It listens and answers in Hindi, Tamil, or English — whichever one
 you spoke.
 
 ```
-Voice  →  Intent (Sarvam STT + planner)  →  Screen perception (Accessibility API)
+Voice  →  Intent (OpenAI STT + planner)  →  Screen perception (Accessibility API)
        →  Target resolution (ranked, app-agnostic)  →  Visual highlight
        →  User taps it themselves  →  Screen-change detected  →  re-perceive  →  repeat
 ```
@@ -99,13 +99,13 @@ full verified flows.
 
 ```mermaid
 flowchart TD
-    U([User speaks]) --> STT[Saaras STT<br/>transcript + language]
-    STT --> P[Sarvam-105B planner<br/>forced tool call]
+    U([User speaks]) --> STT[gpt-transcribe<br/>transcript + language]
+    STT --> P[gpt-6-luna planner<br/>forced tool call]
     R[ScreenReaderService<br/>read-only accessibility snapshot] --> P
     P -->|step + target + instruction<br/>+ language, all in the user's script| SC[SessionController]
     SC --> OV[OverlayService]
     OV --> HL[HighlightView<br/>cursor flies to target, ring blooms]
-    SC --> TTS[Bulbul TTS<br/>speaks the instruction back]
+    SC --> TTS[gpt-4o-mini-tts<br/>speaks the instruction back]
     P -.network fails / low confidence.-> SE[StepEngine<br/>deterministic fallback, no network]
     SE --> SC
 ```
@@ -114,9 +114,9 @@ flowchart TD
 | --- | --- |
 | **Overlay pill** | Renders the highlight and pill. Never reasons. |
 | **Screen reader** | Read-only Accessibility snapshot of the live UI. No gestures. |
-| **Saaras STT** | Voice → transcript + detected language. |
-| **Sarvam-105B planner** | Transcript + screen snapshot → next step, forced tool call. |
-| **Bulbul TTS** | Instruction → spoken audio, in the detected language. |
+| **OpenAI STT** | `gpt-transcribe`: voice → transcript + detected language. |
+| **OpenAI planner** | `gpt-6-luna`: transcript + screen snapshot → next step, forced tool call. |
+| **OpenAI TTS** | `gpt-4o-mini-tts`: instruction → spoken audio. |
 | **StepEngine** | Deterministic, no-network fallback — completes the task even if every network call above fails. |
 
 This is the M1-milestone shape, frozen by design (see
@@ -177,11 +177,11 @@ overlay windows, and the microphone don't behave meaningfully on an emulator.
 
 ```powershell
 cd src/ScreenSaathi
-cp local.properties.example local.properties   # set sdk.dir; sarvam.api.key is optional
+cp local.properties.example local.properties   # set sdk.dir; openai.api.key is optional
 .\gradlew.bat assembleDebug
 ```
 
-The app builds and runs with **no Sarvam key** — every network step falls
+The app builds and runs with **no OpenAI key** — every network step falls
 back to the deterministic `StepEngine`. Full walkthrough:
 [`src/ScreenSaathi/docs/DEVELOPMENT.md`](src/ScreenSaathi/docs/DEVELOPMENT.md).
 
@@ -194,7 +194,7 @@ Android, vision/perception, UX, safety, and developer experience — plus setup
 and workflow. If you're an AI coding agent picking this repository up, start
 at [`src/ScreenSaathi/AGENTS.md`](src/ScreenSaathi/AGENTS.md).
 
-Five core pieces (overlay, screen reader, Saaras STT, Bulbul TTS, the
+Five core pieces (overlay, screen reader, OpenAI STT, OpenAI TTS, the
 planner) and the JSON Schema contracts are frozen — see Contracts above.
 Everything else — prompt/planner improvements, UX polish, reliability,
 performance, new tasks — is fair game without asking first.
@@ -219,7 +219,7 @@ Release process and how a new build is verified before shipping:
 ## Data handling & security
 
 ScreenSaathi sends a text snapshot of the foreground app's screen, plus
-recorded audio and spoken instructions, to `api.sarvam.ai` to do its job. No
+recorded audio and spoken instructions, to `api.openai.com` to do its job. No
 screen content, transcript, or audio is persisted beyond a temporary `.wav`
 file deleted immediately after each call. Full accounting:
 [`src/ScreenSaathi/SECURITY.md`](src/ScreenSaathi/SECURITY.md) and

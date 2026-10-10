@@ -28,11 +28,13 @@ data class OverlayCommand(
      * and the language chip, so the chrome speaks the user's language too
      * rather than staying English around a Hindi sentence.
      */
-    val language: String = "en-IN",
+    val language: String = com.screensaathi.sarvam.Language.APP_DEFAULT,
     /**
      * Options for the user to pick from, e.g. the ride apps on this phone.
      * Empty for an ordinary guiding step. The renderer shows one button per
      * entry and reports back the index that was tapped.
      */
     val choices: List<String> = emptyList(),
+    /** Show the one-shot Confirm / Decline gate for a pending local action. */
+    val confirmationRequired: Boolean = false,
 )

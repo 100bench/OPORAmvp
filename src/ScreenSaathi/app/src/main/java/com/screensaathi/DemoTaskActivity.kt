@@ -24,10 +24,10 @@ class DemoTaskActivity : AppCompatActivity() {
 
         submit.setOnClickListener {
             if (amount.text.isNullOrBlank() || account.text.isNullOrBlank()) {
-                status.text = "Please fill both fields first."
+                status.text = "Сначала заполните оба поля."
                 status.setTextColor(0xFFB00020.toInt())
             } else {
-                status.text = "✓ Paid ₹${amount.text} for account ${account.text}"
+                status.text = "✓ Оплачено ${amount.text} ₽ по счёту ${account.text}"
                 status.setTextColor(0xFF1B8A5A.toInt())
             }
         }

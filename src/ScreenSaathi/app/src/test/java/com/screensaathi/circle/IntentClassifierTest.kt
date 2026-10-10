@@ -12,6 +12,14 @@ import org.junit.Test
 class IntentClassifierTest {
 
     @Test
+    fun `Russian requests classify without falling back to English`() {
+        assertEquals(CircleIntent.INFORMATION, IntentClassifier.classify("Что на экране?"))
+        assertEquals(CircleIntent.GUIDANCE, IntentClassifier.classify("Покажи, как это использовать"))
+        assertEquals(CircleIntent.ACTION, IntentClassifier.classify("Помоги оплатить это"))
+        assertEquals(CircleIntent.TRANSLATION, IntentClassifier.classify("Переведи это на русский"))
+    }
+
+    @Test
     fun `plain questions are information`() {
         assertEquals(CircleIntent.INFORMATION, IntentClassifier.classify("What is this?"))
         assertEquals(CircleIntent.INFORMATION, IntentClassifier.classify("How much does this cost?"))

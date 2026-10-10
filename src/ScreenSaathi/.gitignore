@@ -1,6 +1,6 @@
 # Secrets and machine-local config.
-# local.properties holds the Sarvam API key and the SDK path. It must NEVER be
-# committed — the key reaches the app through BuildConfig at build time instead.
+# local.properties holds the OpenAI key and the SDK path. It must NEVER be
+# committed. The development proxy reads it locally; the APK never does.
 local.properties
 *.keystore
 *.jks
@@ -8,6 +8,7 @@ local.properties
 # Build output
 build/
 .gradle/
+.gradle-user-home/
 .kotlin/
 *.apk
 *.aab

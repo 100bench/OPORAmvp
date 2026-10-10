@@ -11,12 +11,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Sarvam-105B planner. Forces a single structured tool call (tool_choice
+ * OpenAI planner. Forces a single structured tool call (tool_choice
  * required) so the model always returns the FROZEN planner schema, never prose.
  * reasoning_effort is disabled — this is a fast routing decision, not a
  * chain-of-thought task, and reasoning tokens would blow the latency budget.
  *
- * Returns null on any failure (no key, timeout, malformed) so the caller falls
+ * Returns null on any failure (gateway, timeout, malformed) so the caller falls
  * back to deterministic step ordering. The overlay is never left frozen.
  *
  * Latency budget: < 700 ms.
@@ -30,7 +30,7 @@ class SarvamPlanner(context: Context) {
     /**
      * Blocking. Call off the main thread.
      *
-     * @param spokenLanguage what Saaras detected the user speaking; the planner
+     * @param spokenLanguage what STT detected the user speaking; the planner
      *   is asked to answer in it.
      * @param currentStepId where the user is right now. Without it the prompt's
      *   "if unclear, stay on the current step" rule was unfollowable — the model
@@ -43,14 +43,14 @@ class SarvamPlanner(context: Context) {
         spokenLanguage: String,
         currentStepId: String?,
     ): PlannerResult? {
-        if (!Sarvam.hasKey()) {
-            Log.w(TAG, "No Sarvam key — planner unavailable")
+        if (!Sarvam.isConfigured()) {
+            Log.w(TAG, "No AI gateway configured — planner unavailable")
             return null
         }
 
         val userContent = buildUserContent(transcript, task, screen, spokenLanguage, currentStepId)
         val messages = JSONArray()
-            .put(JSONObject().put("role", "system").put("content", systemPrompt))
+            .put(JSONObject().put("role", "developer").put("content", systemPrompt))
             .put(JSONObject().put("role", "user").put("content", userContent))
 
         val payload = JSONObject()
@@ -59,14 +59,13 @@ class SarvamPlanner(context: Context) {
             .put("tools", JSONArray().put(toolSpec(task)))
             .put("tool_choice", "required")
             .put("parallel_tool_calls", false)
-            .put("reasoning_effort", JSONObject.NULL) // disable thinking → fast
+            .put("reasoning_effort", "none")
             .put("temperature", 0.1)
-            .put("max_tokens", 300)
+            .put("max_completion_tokens", 300)
             .toString()
 
         val req = Request.Builder()
             .url(Sarvam.CHAT_URL)
-            .addHeader(Sarvam.AUTH_HEADER, Sarvam.apiKey)
             .post(payload.toRequestBody(JSON))
             .build()
 
@@ -80,7 +79,7 @@ class SarvamPlanner(context: Context) {
                 parse(raw, task, spokenLanguage)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Planner failed: ${e.message}")
+            Log.w(TAG, "Planner failed (${e.javaClass.simpleName}): ${e.message}", e)
             null
         }
     }
@@ -160,23 +159,29 @@ class SarvamPlanner(context: Context) {
     fun planOpenEnded(
         transcript: String,
         screen: ScreenSnapshot,
-        spokenLanguage: String
+        spokenLanguage: String,
+        completedStep: String? = null,
     ): PlannerResult? {
-        if (!Sarvam.hasKey()) {
-            Log.w(TAG, "No Sarvam key — planner unavailable")
+        if (!Sarvam.isConfigured()) {
+            Log.w(TAG, "No AI gateway configured — planner unavailable")
             return null
         }
 
         val userContent = buildString {
             append("User intent: \"").append(transcript).append("\"\n")
+            if (!completedStep.isNullOrBlank()) {
+                append("The user has just completed this previous guidance: \"")
+                    .append(completedStep).append("\". Do not repeat that step; ")
+                    .append("choose the next useful control on the current screen.\n")
+            }
             append("Detected spoken language: ").append(Language.normalize(spokenLanguage))
             append(" — reply in this language, in its own script.\n\n")
             append(screen.toPromptText())
         }
 
-        val openEndedSystemPrompt = "You are an autonomous Screen assistant. Given the user's intent and the current screen, identify the next step. Set action_type to 'launch_app' to open an app (and set action_payload to the app name), 'type_text' to type text into a field (set action_payload to the text), 'click' to automatically tap an element, 'guide' to point at it, or 'answer' to simply answer a user's question based on the screen context. If the user's intent is fully resolved or you are answering a question, set is_done=true. In your instruction, narrate the action or provide the direct answer to the user in their language."
+        val openEndedSystemPrompt = "You are a safe screen guide for a Russian-speaking user. Preserve the user's original goal across screens and give exactly one next step at a time. You may only explain the current screen (answer) or point to one real visible element (guide). You never click, type, launch apps, make calls, or create executable actions. If text must be entered, point to the real input and clearly say what the user should type. If the request is ambiguous, ask one short clarifying question using answer. Set is_done=true only for an explanation, question, completed goal, or safe stopping point. Never guide the user to a final order, purchase, payment, or confirmation button; at checkout tell them to review the details and take over themselves. Always write instruction in natural Russian using Cyrillic and set language to ru-RU. For guide, copy one exact visible UI label into target_text. If the tree contains both a small caption and a larger tile/container with the same label, copy the exact label of the larger control so the whole control is highlighted."
         val messages = JSONArray()
-            .put(JSONObject().put("role", "system").put("content", openEndedSystemPrompt))
+            .put(JSONObject().put("role", "developer").put("content", openEndedSystemPrompt))
             .put(JSONObject().put("role", "user").put("content", userContent))
 
         val payload = JSONObject()
@@ -185,14 +190,13 @@ class SarvamPlanner(context: Context) {
             .put("tools", JSONArray().put(toolSpecOpenEnded()))
             .put("tool_choice", "required")
             .put("parallel_tool_calls", false)
-            .put("reasoning_effort", JSONObject.NULL)
+            .put("reasoning_effort", "none")
             .put("temperature", 0.1)
-            .put("max_tokens", 300)
+            .put("max_completion_tokens", 300)
             .toString()
 
         val req = Request.Builder()
             .url(Sarvam.CHAT_URL)
-            .addHeader(Sarvam.AUTH_HEADER, Sarvam.apiKey)
             .post(payload.toRequestBody(JSON))
             .build()
 
@@ -206,7 +210,7 @@ class SarvamPlanner(context: Context) {
                 parseOpenEnded(raw, spokenLanguage, transcript)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Planner failed: ${e.message}")
+            Log.w(TAG, "Planner failed (${e.javaClass.simpleName}): ${e.message}", e)
             null
         }
     }
@@ -218,8 +222,8 @@ class SarvamPlanner(context: Context) {
                 "properties",
                 JSONObject()
                     .put("is_done", JSONObject().put("type", "boolean"))
-                    .put("action_type", JSONObject().put("type", "string").put("enum", JSONArray().put("guide").put("click").put("launch_app").put("answer").put("type_text")))
-                    .put("action_payload", JSONObject().put("type", "string").put("description", "If action_type is launch_app, the app name. If action_type is type_text, the text to type."))
+                    .put("action_type", JSONObject().put("type", "string").put("enum", JSONArray().put("guide").put("answer")))
+                    .put("action_payload", JSONObject().put("type", "string").put("description", "Must be empty. Executable actions are created only on-device."))
                     .put("target_resource_id", JSONObject().put("type", "string"))
                     .put("target_text", JSONObject().put("type", "string"))
                     .put(

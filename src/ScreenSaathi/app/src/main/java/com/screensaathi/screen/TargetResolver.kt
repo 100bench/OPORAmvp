@@ -119,7 +119,7 @@ object TargetResolver {
     private fun normalize(s: String) = s.trim().lowercase()
 
     /** Drops separators so "wi-fi", "wi fi" and "wifi" compare equal. */
-    private fun stripped(s: String) = s.replace(Regex("[^a-z0-9]"), "")
+    private fun stripped(s: String) = s.replace(Regex("[^\\p{L}\\p{N}]"), "")
 
     private fun startsWithWord(haystack: String, needle: String): Boolean =
         haystack == needle || haystack.startsWith("$needle ") ||
