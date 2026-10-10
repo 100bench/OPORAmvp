@@ -38,6 +38,7 @@
             </FrameLayout>
 
             <TextView
+                android:id="@+id/pill_label"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
@@ -46,6 +47,18 @@
                 android:textColor="@color/opora_ink"
                 android:textSize="20sp"
                 android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/language_chip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/opora_close_bg"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:text="Русский"
+                android:textColor="@color/opora_brand_dark"
+                android:textSize="11sp" />
 
             <ImageView
                 android:id="@+id/close_button"
@@ -299,43 +312,25 @@
     </LinearLayout>
 
     <FrameLayout
-        android:id="@+id/minimized_dot"
-        android:layout_width="64dp"
-        android:layout_height="64dp"
-        android:background="@drawable/opora_orb_bg"
-        android:clickable="true"
-        android:elevation="12dp"
-        android:focusable="true"
-        android:visibility="gone">
-
-        <ImageView
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_gravity="center"
-            android:contentDescription="@null"
-            android:src="@drawable/opora_agent_face" />
-    </FrameLayout>
-
-    <LinearLayout
         android:id="@+id/pill_row"
-        android:layout_width="wrap_content"
-        android:layout_height="64dp"
+        android:layout_width="68dp"
+        android:layout_height="68dp"
         android:layout_gravity="center_horizontal"
-        android:background="@drawable/opora_overlay_pill_bg"
+        android:background="@drawable/opora_docked_bubble_bg"
         android:clickable="true"
         android:elevation="12dp"
         android:focusable="true"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        android:contentDescription="Открыть помощника">
 
         <FrameLayout
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_gravity="center"
             android:background="@drawable/opora_orb_bg">
 
             <ImageView
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
                 android:layout_gravity="center"
                 android:contentDescription="@null"
                 android:src="@drawable/opora_agent_face" />
@@ -346,27 +341,5 @@
                 android:layout_height="14dp"
                 android:layout_gravity="end|bottom" />
         </FrameLayout>
-
-        <TextView
-            android:id="@+id/pill_label"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="12dp"
-            android:text="Опора"
-            android:textColor="@color/opora_brand_dark"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/language_chip"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/opora_close_bg"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="4dp"
-            android:text="Русский"
-            android:textColor="@color/opora_brand_dark"
-            android:textSize="11sp" />
-    </LinearLayout>
+    </FrameLayout>
 </LinearLayout>

@@ -86,7 +86,14 @@ class OverlayService : Service() {
     /** True while the assistant card is temporarily moved away from a target. */
     private var avoidingHighlight = false
     private var dockAnimator: android.animation.ValueAnimator? = null
-    private lateinit var minimizedDot: View
+    private var pendingLayoutListener: View.OnLayoutChangeListener? = null
+
+    /** The inactive assistant is a real compact window, not a circle drawn
+     *  inside the old 320dp card. That keeps the app underneath touchable and
+     *  lets the bubble actually dock against either screen edge. */
+    private var compactWindow = true
+    private var bubbleDockedRight = true
+    private var bubbleY = UNSET_POSITION
 
     private lateinit var controller: SessionController
 
@@ -186,8 +193,6 @@ class OverlayService : Service() {
         micButton = pillRoot.findViewById(R.id.mic_button)
         transportRow = pillRoot.findViewById(R.id.transport_row)
         waveform = pillRoot.findViewById(R.id.waveform)
-        minimizedDot = pillRoot.findViewById(R.id.minimized_dot)
-        minimizedDot.setOnClickListener { setMinimized(false) }
         collapsedMenu = pillRoot.findViewById(R.id.collapsed_menu)
         languageChip = pillRoot.findViewById(R.id.language_chip)
         debugPanel = pillRoot.findViewById(R.id.debug_panel)
@@ -245,7 +250,11 @@ class OverlayService : Service() {
         // finger, so it has to end the turn too.
         waveform.setOnClickListener { controller.onMicTapped() }
         pillRoot.findViewById<View>(R.id.next_button).setOnClickListener { controller.onNextTapped() }
-        pillRoot.findViewById<View>(R.id.stop_button).setOnClickListener { controller.onStopTapped() }
+        pillRoot.findViewById<View>(R.id.stop_button).setOnClickListener {
+            controller.onStopTapped()
+            // Finishing a session always returns to the movable edge bubble.
+            main.post { setExpanded(false) }
+        }
         pillRoot.findViewById<View>(R.id.close_button).setOnClickListener {
             controller.onStopTapped()
             // onStopTapped posts its render through the same main Handler.
@@ -255,14 +264,10 @@ class OverlayService : Service() {
         }
 
         val lp = WindowManager.LayoutParams(
-            // FIXED width, not WRAP_CONTENT. With wrap, the WindowManager
-            // frame was a function of the instruction text — a longer
-            // sentence, or the same sentence in Tamil, silently moved the
-            // window's left edge and every control inside it. The mic then
-            // sat somewhere other than where it had just been drawn. Pinning
-            // the outer frame means content changes animate *inside* a
-            // stationary window and the touch region never moves.
-            dp(PILL_WIDTH_DP),
+            // Fixed per mode, never WRAP_CONTENT: 80dp for the docked bubble,
+            // 320dp for the card/menu. Text can change without moving the
+            // window edge or silently changing the touch region.
+            dp(BUBBLE_WINDOW_WIDTH_DP),
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType(),
             // Not focusable, so the keyboard on the screen underneath still works,
@@ -321,18 +326,101 @@ class OverlayService : Service() {
     private fun imeTop(): Int = ScreenReaderService.instance?.imeTopPx() ?: 0
 
     private fun windowSize(): Pair<Int, Int> {
-        val w = if (pillRoot.width > 0) pillRoot.width else dp(PILL_WIDTH_DP)
+        val requestedWidth = pillParams?.width?.takeIf { it > 0 }
+            ?: dp(if (compactWindow) BUBBLE_WINDOW_WIDTH_DP else PILL_WIDTH_DP)
+        val w = if (pillRoot.width > 0 && pillRoot.width == requestedWidth) {
+            pillRoot.width
+        } else {
+            requestedWidth
+        }
         val h = if (pillRoot.height > 0) pillRoot.height else dp(96)
         return w to h
     }
 
-    /** Bottom-centre, the resting place before the user moves it. */
+    /** Right edge, just above bottom controls — the reference resting place. */
     private fun restToDefaultPosition() {
         val (w, h) = windowSize()
         val safe = safeArea()
-        userX = safe.left + (safe.width() - w) / 2
-        userY = safe.bottom - h - dp(28)
+        userX = safe.right - w - dp(DOCK_MARGIN_DP)
+        userY = safe.bottom - h - dp(DEFAULT_BOTTOM_GAP_DP)
+        bubbleDockedRight = true
+        bubbleY = userY
         applyPosition(userX, userY, respectKeyboard = true)
+    }
+
+    /** Remember where the user left the compact bubble before opening UI. */
+    private fun rememberBubblePosition() {
+        if (!compactWindow) return
+        val lp = pillParams ?: return
+        val (w, _) = windowSize()
+        bubbleDockedRight = lp.x + w / 2 >= safeArea().centerX()
+        bubbleY = lp.y
+    }
+
+    private fun setWindowWidth(widthDp: Int) {
+        val lp = pillParams ?: return
+        lp.width = dp(widthDp)
+        runCatching { wm.updateViewLayout(pillRoot, lp) }
+    }
+
+    /** Run placement only after WindowManager has measured the new surface.
+     *  A plain View.post can still observe the previous card height, which
+     *  makes the newly-small bubble jump upward as though it were still tall. */
+    private fun afterNextWindowLayout(block: () -> Unit) {
+        pendingLayoutListener?.let { pillRoot.removeOnLayoutChangeListener(it) }
+        val listener = object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View,
+                left: Int,
+                top: Int,
+                right: Int,
+                bottom: Int,
+                oldLeft: Int,
+                oldTop: Int,
+                oldRight: Int,
+                oldBottom: Int,
+            ) {
+                v.removeOnLayoutChangeListener(this)
+                if (pendingLayoutListener === this) pendingLayoutListener = null
+                block()
+            }
+        }
+        pendingLayoutListener = listener
+        pillRoot.addOnLayoutChangeListener(listener)
+        pillRoot.requestLayout()
+    }
+
+    /** Give the card/menu its full canvas while preserving the bubble's home. */
+    private fun showFullWidthWindow() {
+        if (compactWindow) rememberBubblePosition()
+        compactWindow = false
+        afterNextWindowLayout {
+            val (w, _) = windowSize()
+            val safe = safeArea()
+            userX = safe.left + (safe.width() - w) / 2
+            userY = if (bubbleY == UNSET_POSITION) userY else bubbleY
+            applyPosition(userX, userY, respectKeyboard = true)
+        }
+        setWindowWidth(PILL_WIDTH_DP)
+    }
+
+    /** Shrink back to the circle and restore its chosen edge and height. */
+    private fun restoreDockedBubble() {
+        compactWindow = true
+        afterNextWindowLayout {
+            val (w, h) = windowSize()
+            val safe = safeArea()
+            userX = if (bubbleDockedRight) {
+                safe.right - w - dp(DOCK_MARGIN_DP)
+            } else {
+                safe.left + dp(DOCK_MARGIN_DP)
+            }
+            val defaultY = safe.bottom - h - dp(DEFAULT_BOTTOM_GAP_DP)
+            userY = if (bubbleY == UNSET_POSITION) defaultY else bubbleY
+            bubbleY = userY
+            applyPosition(userX, userY, respectKeyboard = true)
+        }
+        setWindowWidth(BUBBLE_WINDOW_WIDTH_DP)
     }
 
     /**
@@ -437,10 +525,22 @@ class OverlayService : Service() {
                         if (!moved) return false // let the click listener run
                         val (w, _) = windowSize()
                         val safe = safeArea()
-                        val snapped = com.screensaathi.overlay.AssistantPlacement
-                            .snapX(lp.x, w, safe, resources.displayMetrics.density)
+                        val snapped = if (compactWindow) {
+                            val dockRight = lp.x + w / 2 >= safe.centerX()
+                            bubbleDockedRight = dockRight
+                            com.screensaathi.overlay.AssistantPlacement.dockX(
+                                lp.x,
+                                w,
+                                safe,
+                                dp(DOCK_MARGIN_DP),
+                            )
+                        } else {
+                            com.screensaathi.overlay.AssistantPlacement
+                                .snapX(lp.x, w, safe, resources.displayMetrics.density)
+                        }
                         userX = snapped
                         userY = lp.y
+                        if (compactWindow) bubbleY = userY
                         uiState = stateBeforeDrag
                         animateToX(snapped)
                         return true
@@ -471,18 +571,6 @@ class OverlayService : Service() {
             }
             start()
         }
-    }
-
-    /** Park the assistant as a dot so the app underneath is usable. */
-    fun setMinimized(minimized: Boolean) {
-        if (minimized && uiState == AssistantUiState.MINIMIZED) return
-        uiState = if (minimized) AssistantUiState.MINIMIZED else AssistantUiState.COLLAPSED
-        cardBody.visibility = View.GONE
-        collapsedMenu.visibility = View.GONE
-        pillRoot.findViewById<View>(R.id.pill_row).visibility =
-            if (minimized) View.GONE else View.VISIBLE
-        minimizedDot.visibility = if (minimized) View.VISIBLE else View.GONE
-        pillRoot.post { applyPosition(userX, userY, respectKeyboard = true) }
     }
 
     /**
@@ -769,9 +857,13 @@ class OverlayService : Service() {
     }
 
     private fun toggleCollapsedMenu() {
-        collapsedMenu.visibility =
-            if (collapsedMenu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-        pillRoot.post { applyPosition(userX, userY, respectKeyboard = true) }
+        if (collapsedMenu.visibility == View.VISIBLE) {
+            collapsedMenu.visibility = View.GONE
+            restoreDockedBubble()
+        } else {
+            collapsedMenu.visibility = View.VISIBLE
+            showFullWidthWindow()
+        }
     }
 
     private fun setExpanded(value: Boolean) {
@@ -780,9 +872,9 @@ class OverlayService : Service() {
         cardBody.visibility = if (value) View.VISIBLE else View.GONE
         uiState = if (value) AssistantUiState.EXPANDED else AssistantUiState.COLLAPSED
         // Exactly one state indicator on screen at a time: the 52dp mic orb
-        // when expanded, the 18dp collapsed dot otherwise — never both.
+        // when expanded, the 14dp collapsed dot otherwise — never both.
         stateDot.visibility = if (value) View.GONE else View.VISIBLE
-        pillRoot.post { applyPosition(userX, userY, respectKeyboard = true) }
+        if (value) showFullWidthWindow() else restoreDockedBubble()
     }
 
     // --- Foreground plumbing --------------------------------------------------
@@ -824,6 +916,8 @@ class OverlayService : Service() {
         if (live === this) live = null
         stopLevelPump()
         controller.dispose()
+        pendingLayoutListener?.let { pillRoot.removeOnLayoutChangeListener(it) }
+        pendingLayoutListener = null
         // Selection mode may still be up if the service is torn down mid-gesture;
         // a leaked full-screen touchable window would swallow every tap.
         selectionView?.let { runCatching { wm.removeView(it) } }
@@ -855,8 +949,12 @@ class OverlayService : Service() {
             svc.main.post { svc.applyPosition(svc.userX, svc.userY, respectKeyboard = true) }
         }
 
-        /** Fixed outer overlay width — see the LayoutParams comment. */
+        /** Full assistant width; the inactive overlay uses the compact width. */
         private const val PILL_WIDTH_DP = 320
+        private const val BUBBLE_WINDOW_WIDTH_DP = 80
+        private const val DOCK_MARGIN_DP = 8
+        private const val DEFAULT_BOTTOM_GAP_DP = 112
+        private const val UNSET_POSITION = Int.MIN_VALUE
         private const val TRANSITION_MS = 220L
         private const val DOCK_MS = 180L
         private const val TAG_UI = "AssistantUI"

@@ -44,6 +44,21 @@ object AssistantPlacement {
         }
     }
 
+    /** Compact bubbles always settle on the nearest side, never in the middle. */
+    fun dockX(x: Int, w: Int, safe: Rect, marginPx: Int): Int =
+        dockX(x, w, safe.left, safe.right, marginPx)
+
+    /** Android-free overload used by JVM tests. */
+    fun dockX(x: Int, w: Int, safeLeft: Int, safeRight: Int, marginPx: Int): Int {
+        val centre = x + w / 2
+        val safeCentre = safeLeft + (safeRight - safeLeft) / 2
+        return if (centre >= safeCentre) {
+            safeRight - w - marginPx
+        } else {
+            safeLeft + marginPx
+        }
+    }
+
     /**
      * Lift the assistant clear of the keyboard, and only then.
      *
