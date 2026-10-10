@@ -1,81 +1,120 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The floating assistant, anchored at the bottom of the screen. Collapsed =
-     the pill row only. Expanded = the card body unfolds ABOVE the pill row so
-     the pill stays put at the bottom edge and the card grows upward, never
-     covering the form fields the highlight points at. -->
+<!-- Opora overlay translated from the supplied Figma composition. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/pill_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@drawable/pill_bg"
-    android:padding="10dp"
-    android:elevation="12dp">
+    android:gravity="center_horizontal"
+    android:padding="6dp">
 
-    <!-- Card body: shown only when expanded. Sits ABOVE the pill row. -->
     <LinearLayout
         android:id="@+id/card_body"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginBottom="10dp"
+        android:background="@drawable/opora_overlay_card_bg"
+        android:elevation="12dp"
         android:orientation="vertical"
-        android:paddingHorizontal="8dp"
-        android:paddingBottom="10dp"
         android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@drawable/opora_orb_bg">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@null"
+                    android:src="@drawable/opora_agent_face" />
+            </FrameLayout>
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:text="Опора"
+                android:textColor="@color/opora_ink"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <ImageView
+                android:id="@+id/close_button"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="@drawable/opora_close_bg"
+                android:clickable="true"
+                android:contentDescription="Свернуть помощника"
+                android:focusable="true"
+                android:padding="12dp"
+                android:src="@drawable/opora_close" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/instruction_text"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Нажмите на микрофон и скажите, что нужно сделать."
-            android:textColor="@color/saathi_text"
-            android:textSize="16sp"
-            android:lineSpacingExtra="2dp"
-            android:paddingBottom="12dp"
-            android:maxLines="3"
-            android:ellipsize="end" />
+            android:layout_marginTop="14dp"
+            android:ellipsize="end"
+            android:lineSpacingExtra="3dp"
+            android:maxLines="4"
+            android:text="Скажите, что нужно сделать. Я объясню следующий шаг."
+            android:textColor="@color/opora_ink"
+            android:textSize="22sp"
+            android:textStyle="bold" />
 
-        <!-- Choice row: one button per option (e.g. the ride apps on this
-             phone). Hidden unless the current step actually asks something. -->
         <LinearLayout
             android:id="@+id/choice_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
             android:orientation="horizontal"
-            android:paddingBottom="10dp"
             android:visibility="gone">
 
             <TextView
                 android:id="@+id/choice_0"
                 android:layout_width="0dp"
-                android:layout_height="60dp"
+                android:layout_height="56dp"
                 android:layout_weight="1"
-                android:background="@drawable/mic_btn_bg"
+                android:background="@drawable/opora_primary_button_bg"
                 android:gravity="center"
-                android:textColor="@color/saathi_text"
+                android:paddingHorizontal="8dp"
+                android:textColor="#FFFFFFFF"
                 android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/choice_1"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_weight="1"
+                android:layout_height="56dp"
                 android:layout_marginStart="8dp"
-                android:background="@drawable/mic_btn_bg"
+                android:layout_weight="1"
+                android:background="@drawable/opora_primary_button_bg"
                 android:gravity="center"
-                android:textColor="@color/saathi_text"
+                android:paddingHorizontal="8dp"
+                android:textColor="#FFFFFFFF"
                 android:textSize="15sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/choice_2"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_weight="1"
+                android:layout_height="56dp"
                 android:layout_marginStart="8dp"
-                android:background="@drawable/mic_btn_bg"
+                android:layout_weight="1"
+                android:background="@drawable/opora_primary_button_bg"
                 android:gravity="center"
-                android:textColor="@color/saathi_text"
+                android:paddingHorizontal="8dp"
+                android:textColor="#FFFFFFFF"
                 android:textSize="15sp"
                 android:textStyle="bold" />
         </LinearLayout>
@@ -84,30 +123,33 @@
             android:id="@+id/confirmation_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
             android:orientation="horizontal"
-            android:paddingBottom="10dp"
             android:visibility="gone">
 
             <TextView
                 android:id="@+id/decline_button"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
+                android:layout_height="56dp"
                 android:layout_weight="1"
-                android:background="@drawable/ghost_btn_bg"
+                android:background="@drawable/opora_secondary_button_bg"
                 android:gravity="center"
                 android:text="Отказаться"
-                android:textColor="@color/saathi_text" />
+                android:textColor="@color/opora_brand_dark"
+                android:textSize="15sp"
+                android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/confirm_button"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_weight="1"
+                android:layout_height="56dp"
                 android:layout_marginStart="8dp"
-                android:background="@drawable/mic_btn_bg"
+                android:layout_weight="1"
+                android:background="@drawable/opora_primary_button_bg"
                 android:gravity="center"
                 android:text="Подтвердить"
-                android:textColor="@color/saathi_text"
+                android:textColor="#FFFFFFFF"
+                android:textSize="15sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
@@ -115,99 +157,92 @@
             android:id="@+id/text_command_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingBottom="10dp">
+            android:layout_marginTop="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <EditText
                 android:id="@+id/text_command"
                 android:layout_width="0dp"
-                android:layout_height="48dp"
+                android:layout_height="56dp"
                 android:layout_weight="1"
                 android:background="@drawable/field_bg"
                 android:hint="Напишите вопрос"
                 android:imeOptions="actionSend"
                 android:inputType="textCapSentences"
                 android:maxLines="2"
-                android:paddingHorizontal="12dp"
-                android:textColor="#FF101010"
-                android:textColorHint="#88101010"
-                android:textSize="14sp" />
+                android:paddingHorizontal="14dp"
+                android:textColor="@color/opora_ink"
+                android:textColorHint="#8849544F"
+                android:textSize="15sp" />
 
             <TextView
                 android:id="@+id/send_text_button"
-                android:layout_width="72dp"
-                android:layout_height="48dp"
+                android:layout_width="64dp"
+                android:layout_height="56dp"
                 android:layout_marginStart="8dp"
-                android:background="@drawable/mic_btn_bg"
+                android:background="@drawable/opora_primary_button_bg"
                 android:gravity="center"
-                android:text="Отправить"
-                android:textColor="@color/saathi_text"
-                android:textSize="12sp"
+                android:text="→"
+                android:textColor="#FFFFFFFF"
+                android:textSize="24sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!--
-          The single voice surface. Exactly one child is ever visible:
-
-            IDLE / GUIDING -> transport_row (mic, Next, Stop)
-            LISTENING / THINKING / SPEAKING -> waveform
-
-          Both occupy the same fixed-height slot, so swapping between them
-          cannot move anything else in the card — the mic's touch target stays
-          where the mic was drawn, and the row below never shifts under the
-          user's finger mid-tap.
-        -->
         <FrameLayout
             android:id="@+id/voice_slot"
             android:layout_width="match_parent"
-            android:layout_height="56dp">
+            android:layout_height="64dp"
+            android:layout_marginTop="12dp">
 
             <LinearLayout
                 android:id="@+id/transport_row"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                <ImageView
-                    android:id="@+id/mic_button"
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
-                    android:background="@drawable/mic_circle_bg"
-                    android:src="@drawable/ic_mic"
-                    android:scaleType="center"
-                    android:contentDescription="@string/mic_label"
-                    android:clickable="true"
-                    android:focusable="true" />
+                <FrameLayout
+                    android:layout_width="58dp"
+                    android:layout_height="58dp"
+                    android:background="@drawable/opora_mint_circle">
+
+                    <ImageView
+                        android:id="@+id/mic_button"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:clickable="true"
+                        android:contentDescription="@string/mic_label"
+                        android:focusable="true"
+                        android:padding="14dp"
+                        android:src="@drawable/opora_mic" />
+                </FrameLayout>
 
                 <TextView
                     android:id="@+id/next_button"
                     android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
+                    android:layout_height="52dp"
                     android:layout_marginStart="10dp"
-                    android:background="@drawable/ghost_btn_bg"
-                    android:text="Что дальше?"
+                    android:layout_weight="1"
+                    android:background="@drawable/opora_secondary_button_bg"
                     android:gravity="center"
-                    android:textColor="@color/saathi_text"
-                    android:textSize="14sp" />
+                    android:text="Что дальше?"
+                    android:textColor="@color/opora_brand_dark"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
 
-                <!-- Stop: always reachable, so the user can call the guidance off
-                     mid-sentence without force-quitting anything. -->
                 <TextView
                     android:id="@+id/stop_button"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
                     android:layout_marginStart="8dp"
-                    android:background="@drawable/ghost_btn_bg"
-                    android:text="■"
+                    android:background="@drawable/opora_secondary_button_bg"
                     android:gravity="center"
-                    android:textColor="@color/saathi_text_dim"
-                    android:textSize="13sp" />
+                    android:text="■"
+                    android:textColor="@color/opora_ink_muted"
+                    android:textSize="14sp" />
             </LinearLayout>
 
-            <!-- Tappable too: while listening the mic is gone, and tapping the
-                 wave is the obvious way to say "I'm done". -->
             <com.screensaathi.overlay.VoiceWaveformView
                 android:id="@+id/waveform"
                 android:layout_width="match_parent"
@@ -217,87 +252,121 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <!-- Debug panel (M5). Hidden by default; toggled by long-pressing the pill. -->
         <TextView
             android:id="@+id/debug_panel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
             android:fontFamily="monospace"
-            android:textColor="@color/saathi_text_dim"
+            android:textColor="@color/opora_ink_muted"
             android:textSize="11sp"
-            android:visibility="gone"
-            android:text="" />
+            android:visibility="gone" />
     </LinearLayout>
 
-    <!-- Minimised presentation: a single dot. Shown only in MINIMIZED, where
-         the goal is the smallest possible touch footprint over the app the
-         user is actually trying to use. -->
-    <View
-        android:id="@+id/minimized_dot"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:layout_gravity="center_horizontal"
-        android:background="@drawable/mic_circle_bg"
-        android:clickable="true"
-        android:focusable="true"
-        android:visibility="gone" />
+    <LinearLayout
+        android:id="@+id/collapsed_menu"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/opora_overlay_menu_bg"
+        android:elevation="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
 
-    <!-- Pill row: always visible. Tap to expand/collapse. Stays at the bottom. -->
+        <TextView
+            android:id="@+id/open_assistant_button"
+            android:layout_width="wrap_content"
+            android:layout_height="52dp"
+            android:background="@drawable/opora_primary_button_bg"
+            android:gravity="center"
+            android:minWidth="188dp"
+            android:paddingHorizontal="16dp"
+            android:text="Открыть помощника"
+            android:textColor="#FFFFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/dismiss_assistant_button"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/opora_close_bg"
+            android:contentDescription="Убрать иконку"
+            android:padding="12dp"
+            android:src="@drawable/opora_close" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/minimized_dot"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:background="@drawable/opora_orb_bg"
+        android:clickable="true"
+        android:elevation="12dp"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="center"
+            android:contentDescription="@null"
+            android:src="@drawable/opora_agent_face" />
+    </FrameLayout>
+
     <LinearLayout
         android:id="@+id/pill_row"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
+        android:layout_height="64dp"
         android:layout_gravity="center_horizontal"
-        android:paddingHorizontal="8dp"
-        android:paddingVertical="4dp">
+        android:background="@drawable/opora_overlay_pill_bg"
+        android:clickable="true"
+        android:elevation="12dp"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
 
-        <!-- The at-a-glance indicator for the COLLAPSED pill only. When
-             card_body is expanded, mic_button already shows the same state
-             at 52dp — showing both at once is exactly the "mic + orb + text
-             all together" clutter this was rebuilt to remove, so
-             setExpanded() hides this the instant card_body appears. -->
-        <com.screensaathi.overlay.StateOrbView
-            android:id="@+id/state_dot"
-            android:layout_width="18dp"
-            android:layout_height="18dp" />
+        <FrameLayout
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/opora_orb_bg">
+
+            <ImageView
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="center"
+                android:contentDescription="@null"
+                android:src="@drawable/opora_agent_face" />
+
+            <com.screensaathi.overlay.StateOrbView
+                android:id="@+id/state_dot"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_gravity="end|bottom" />
+        </FrameLayout>
 
         <TextView
             android:id="@+id/pill_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:text="Экранный помощник"
-            android:textColor="@color/saathi_text"
-            android:textSize="15sp"
+            android:layout_marginStart="12dp"
+            android:text="Опора"
+            android:textColor="@color/opora_brand_dark"
+            android:textSize="18sp"
             android:textStyle="bold" />
 
-        <!-- Which language the assistant is currently speaking. Visible proof
-             that detection happened, without a debug panel. -->
         <TextView
             android:id="@+id/language_chip"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/opora_close_bg"
             android:paddingHorizontal="8dp"
-            android:paddingVertical="2dp"
-            android:background="#22FFFFFF"
+            android:paddingVertical="4dp"
             android:text="Русский"
-            android:textColor="@color/saathi_text_dim"
-            android:textSize="12sp" />
-            
-        <TextView
-            android:id="@+id/close_button"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginStart="10dp"
-            android:text="✖"
-            android:gravity="center"
-            android:textColor="@color/saathi_text_dim"
-            android:textSize="18sp"
-            android:clickable="true"
-            android:focusable="true" />
+            android:textColor="@color/opora_brand_dark"
+            android:textSize="11sp" />
     </LinearLayout>
 </LinearLayout>

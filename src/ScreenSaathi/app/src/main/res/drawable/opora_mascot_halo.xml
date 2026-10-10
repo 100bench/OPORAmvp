@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exact halo geometry and opacity from the Figma cover. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="260"
+    android:viewportHeight="260">
+    <path
+        android:fillColor="#2EFFFFFF"
+        android:strokeColor="#61FFFFFF"
+        android:strokeWidth="2"
+        android:pathData="M130,0A130,130 0,1 1,129.999,0Z" />
+</vector>

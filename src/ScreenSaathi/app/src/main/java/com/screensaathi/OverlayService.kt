@@ -58,6 +58,7 @@ class OverlayService : Service() {
     private lateinit var waveform: com.screensaathi.overlay.VoiceWaveformView
     private lateinit var languageChip: TextView
     private lateinit var debugPanel: TextView
+    private lateinit var collapsedMenu: View
     private lateinit var choiceRow: LinearLayout
     private lateinit var choiceButtons: List<TextView>
     private lateinit var confirmationRow: LinearLayout
@@ -187,6 +188,7 @@ class OverlayService : Service() {
         waveform = pillRoot.findViewById(R.id.waveform)
         minimizedDot = pillRoot.findViewById(R.id.minimized_dot)
         minimizedDot.setOnClickListener { setMinimized(false) }
+        collapsedMenu = pillRoot.findViewById(R.id.collapsed_menu)
         languageChip = pillRoot.findViewById(R.id.language_chip)
         debugPanel = pillRoot.findViewById(R.id.debug_panel)
         choiceRow = pillRoot.findViewById(R.id.choice_row)
@@ -214,13 +216,18 @@ class OverlayService : Service() {
             submitTextCommand()
         }
 
-        // The collapsed pill IS the talk control. It used to only expand the
-        // card, which left the mic two taps deep and invisible until the
-        // first one — a judge looking at the idle assistant could not tell
-        // how to speak to it. startListening() expands the card itself, so
-        // one tap goes straight from dormant to listening, and a second tap
-        // (now on the waveform) ends the turn.
-        pillRoot.findViewById<View>(R.id.pill_row).setOnClickListener { controller.onMicTapped() }
+        // The branded floating pill opens an explicit two-action menu. Hiding
+        // the overlay must be deliberate; a normal tap never makes the only
+        // way back into the assistant disappear.
+        pillRoot.findViewById<View>(R.id.pill_row).setOnClickListener {
+            if (expanded) setExpanded(false) else toggleCollapsedMenu()
+        }
+        pillRoot.findViewById<View>(R.id.open_assistant_button).setOnClickListener {
+            setExpanded(true)
+        }
+        pillRoot.findViewById<View>(R.id.dismiss_assistant_button).setOnClickListener {
+            stopSelf()
+        }
         pillRoot.findViewById<View>(R.id.pill_row).setOnLongClickListener {
             debugVisible = !debugVisible
             debugPanel.visibility = if (debugVisible) View.VISIBLE else View.GONE
@@ -239,7 +246,13 @@ class OverlayService : Service() {
         waveform.setOnClickListener { controller.onMicTapped() }
         pillRoot.findViewById<View>(R.id.next_button).setOnClickListener { controller.onNextTapped() }
         pillRoot.findViewById<View>(R.id.stop_button).setOnClickListener { controller.onStopTapped() }
-        pillRoot.findViewById<View>(R.id.close_button).setOnClickListener { stopSelf() }
+        pillRoot.findViewById<View>(R.id.close_button).setOnClickListener {
+            controller.onStopTapped()
+            // onStopTapped posts its render through the same main Handler.
+            // Queue the user's final presentation choice after that render so
+            // an "Остановлено" command cannot immediately reopen the card.
+            main.post { setExpanded(false) }
+        }
 
         val lp = WindowManager.LayoutParams(
             // FIXED width, not WRAP_CONTENT. With wrap, the WindowManager
@@ -465,6 +478,7 @@ class OverlayService : Service() {
         if (minimized && uiState == AssistantUiState.MINIMIZED) return
         uiState = if (minimized) AssistantUiState.MINIMIZED else AssistantUiState.COLLAPSED
         cardBody.visibility = View.GONE
+        collapsedMenu.visibility = View.GONE
         pillRoot.findViewById<View>(R.id.pill_row).visibility =
             if (minimized) View.GONE else View.VISIBLE
         minimizedDot.visibility = if (minimized) View.VISIBLE else View.GONE
@@ -754,14 +768,21 @@ class OverlayService : Service() {
         debugPanel.text = text
     }
 
-    private fun toggleExpanded() = setExpanded(!expanded)
+    private fun toggleCollapsedMenu() {
+        collapsedMenu.visibility =
+            if (collapsedMenu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        pillRoot.post { applyPosition(userX, userY, respectKeyboard = true) }
+    }
 
     private fun setExpanded(value: Boolean) {
         expanded = value
+        collapsedMenu.visibility = View.GONE
         cardBody.visibility = if (value) View.VISIBLE else View.GONE
+        uiState = if (value) AssistantUiState.EXPANDED else AssistantUiState.COLLAPSED
         // Exactly one state indicator on screen at a time: the 52dp mic orb
         // when expanded, the 18dp collapsed dot otherwise — never both.
         stateDot.visibility = if (value) View.GONE else View.VISIBLE
+        pillRoot.post { applyPosition(userX, userY, respectKeyboard = true) }
     }
 
     // --- Foreground plumbing --------------------------------------------------

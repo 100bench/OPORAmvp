@@ -2,125 +2,233 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true"
-    android:background="#FF0B0B0F">
+    android:background="@color/opora_surface"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="28dp">
+        android:orientation="vertical">
 
-        <TextView
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="330dp"
+            android:background="@drawable/opora_hero_bg"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingHorizontal="24dp"
+            android:paddingTop="34dp">
+
+            <FrameLayout
+                android:layout_width="120dp"
+                android:layout_height="120dp">
+
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@null"
+                    android:src="@drawable/opora_mascot_halo" />
+
+                <FrameLayout
+                    android:layout_width="86dp"
+                    android:layout_height="86dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/opora_mascot_face">
+
+                    <ImageView
+                        android:layout_width="56dp"
+                        android:layout_height="42dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@null"
+                        android:src="@drawable/opora_mascot_details" />
+                </FrameLayout>
+            </FrameLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="Опора"
+                android:textColor="#FFFFFFFF"
+                android:textSize="40sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center"
+                android:text="Добрый помощник для уверенного использования Android"
+                android:textColor="#E0FFFFFF"
+                android:textSize="17sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center"
+                android:text="Объясняет · сопровождает · подсвечивает"
+                android:textColor="#B8FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Опора"
-            android:textColor="@color/saathi_text"
-            android:textSize="30sp"
-            android:textStyle="bold" />
+            android:layout_marginHorizontal="18dp"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/opora_setup_card_bg"
+            android:orientation="vertical"
+            android:padding="20dp">
 
-        <TextView
-            android:layout_width="wrap_content"
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Подготовьте помощника"
+                android:textColor="@color/opora_ink"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Разрешения включаются один раз. «Опора» видит только открытый экран и просит подтверждение перед звонком."
+                android:textColor="@color/opora_ink_muted"
+                android:textSize="15sp" />
+
+            <Button
+                android:id="@+id/btn_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:layout_marginTop="20dp"
+                android:backgroundTint="@color/opora_brand"
+                android:text="1. Показ поверх приложений"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFFFF"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/btn_mic"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:layout_marginTop="10dp"
+                android:backgroundTint="@color/opora_brand"
+                android:text="2. Доступ к микрофону"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFFFF"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/btn_accessibility"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:layout_marginTop="10dp"
+                android:backgroundTint="@color/opora_brand"
+                android:text="3. Чтение текущего экрана"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFFFF"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/btn_call"
+                android:layout_width="match_parent"
+                android:layout_height="60dp"
+                android:layout_marginTop="10dp"
+                android:backgroundTint="@color/opora_brand"
+                android:text="4. Звонок после подтверждения"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFFFF"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/setup_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/opora_secondary_button_bg"
+                android:padding="12dp"
+                android:textColor="@color/opora_brand_dark"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Помощник ориентируется по открытому экрану. Контакт ниже нужен только для звонка и на работу подсказок не влияет."
-            android:textColor="@color/saathi_text_dim"
-            android:textSize="15sp"
-            android:paddingTop="6dp"
-            android:paddingBottom="24dp" />
+            android:layout_marginHorizontal="18dp"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/opora_setup_card_bg"
+            android:orientation="vertical"
+            android:padding="20dp">
 
-        <Button
-            android:id="@+id/btn_overlay"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:text="1. Разрешить показ поверх окон"
-            android:textColor="#FFFFFFFF"
-            android:backgroundTint="@color/saathi_accent" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Близкий контакт"
+                android:textColor="@color/opora_ink"
+                android:textSize="22sp"
+                android:textStyle="bold" />
 
-        <Button
-            android:id="@+id/btn_mic"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="12dp"
-            android:text="2. Разрешить микрофон"
-            android:textColor="#FFFFFFFF"
-            android:backgroundTint="@color/saathi_accent" />
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Необязательно. Имя и номер остаются только на этом телефоне."
+                android:textColor="@color/opora_ink_muted"
+                android:textSize="14sp" />
 
-        <Button
-            android:id="@+id/btn_accessibility"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="12dp"
-            android:text="3. Включить чтение экрана"
-            android:textColor="#FFFFFFFF"
-            android:backgroundTint="@color/saathi_accent" />
+            <EditText
+                android:id="@+id/contact_name"
+                android:layout_width="match_parent"
+                android:layout_height="58dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/field_bg"
+                android:hint="Имя, например Мама"
+                android:inputType="textPersonName"
+                android:paddingHorizontal="16dp"
+                android:textColor="@color/opora_ink"
+                android:textColorHint="#8849544F"
+                android:textSize="16sp" />
 
-        <Button
-            android:id="@+id/btn_call"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="12dp"
-            android:text="4. Разрешить звонок после подтверждения"
-            android:textColor="#FFFFFFFF"
-            android:backgroundTint="@color/saathi_accent" />
+            <EditText
+                android:id="@+id/contact_phone"
+                android:layout_width="match_parent"
+                android:layout_height="58dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/field_bg"
+                android:hint="Телефон, например +7 999 123-45-67"
+                android:inputType="phone"
+                android:paddingHorizontal="16dp"
+                android:textColor="@color/opora_ink"
+                android:textColorHint="#8849544F"
+                android:textSize="16sp" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="Контакт для звонка (необязательно)"
-            android:textColor="@color/saathi_text"
-            android:textSize="18sp"
-            android:textStyle="bold" />
-
-        <EditText
-            android:id="@+id/contact_name"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="12dp"
-            android:background="@drawable/field_bg"
-            android:hint="Имя контакта, например Мама"
-            android:inputType="textPersonName"
-            android:paddingHorizontal="14dp"
-            android:textColor="#FF101010"
-            android:textColorHint="#88101010" />
-
-        <EditText
-            android:id="@+id/contact_phone"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="10dp"
-            android:background="@drawable/field_bg"
-            android:hint="Телефон, например +79991234567"
-            android:inputType="phone"
-            android:paddingHorizontal="14dp"
-            android:textColor="#FF101010"
-            android:textColorHint="#88101010" />
-
-        <Button
-            android:id="@+id/btn_save_targets"
-            android:layout_width="match_parent"
-            android:layout_height="54dp"
-            android:layout_marginTop="10dp"
-            android:text="Сохранить контакт" />
+            <Button
+                android:id="@+id/btn_save_targets"
+                android:layout_width="match_parent"
+                android:layout_height="58dp"
+                android:layout_marginTop="12dp"
+                android:backgroundTint="@color/opora_mint"
+                android:text="Сохранить контакт"
+                android:textAllCaps="false"
+                android:textColor="@color/opora_brand_dark"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+        </LinearLayout>
 
         <Button
             android:id="@+id/btn_start"
             android:layout_width="match_parent"
-            android:layout_height="60dp"
-            android:layout_marginTop="28dp"
-            android:text="Запустить помощника"
-            android:textStyle="bold"
-            android:textColor="#FF0B0B0F"
-            android:backgroundTint="@color/saathi_highlight" />
-
-        <TextView
-            android:id="@+id/setup_status"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:textColor="@color/saathi_text_dim"
-            android:textSize="14sp"
-            android:text="" />
-
+            android:layout_height="68dp"
+            android:layout_marginHorizontal="18dp"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="28dp"
+            android:backgroundTint="@color/opora_brand"
+            android:text="Запустить «Опору»"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
     </LinearLayout>
 </ScrollView>

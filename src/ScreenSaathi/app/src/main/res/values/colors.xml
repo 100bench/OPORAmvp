@@ -1,9 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- High-contrast highlight so the pointer reads from across a demo room. -->
-    <color name="saathi_accent">#FF4D8DFF</color>
+    <color name="saathi_accent">#FF0D6B4F</color>
     <color name="saathi_highlight">#FF00E5A0</color>
     <color name="saathi_pill_bg">#F00B0B0F</color>
     <color name="saathi_text">#FFFFFFFF</color>
     <color name="saathi_text_dim">#B3FFFFFF</color>
+
+    <!-- Opora design tokens from the supplied Figma files. -->
+    <color name="opora_brand">#FF0D6B4F</color>
+    <color name="opora_brand_dark">#FF08533C</color>
+    <color name="opora_cover_green">#FF35C878</color>
+    <color name="opora_mint">#FFDDECE5</color>
+    <color name="opora_border">#FFD5DED9</color>
+    <color name="opora_ink">#FF151816</color>
+    <color name="opora_ink_muted">#FF49544F</color>
+    <color name="opora_surface">#FFF5F8F6</color>
 </resources>

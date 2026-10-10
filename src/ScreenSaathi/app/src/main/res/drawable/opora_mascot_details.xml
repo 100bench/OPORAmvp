@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exact face details exported from the Figma cover. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="56dp"
+    android:height="42dp"
+    android:viewportWidth="120"
+    android:viewportHeight="90">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M35,34C39.9706,34 44,29.9706 44,25C44,20.0294 39.9706,16 35,16C30.0294,16 26,20.0294 26,25C26,29.9706 30.0294,34 35,34Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M85,34C89.9706,34 94,29.9706 94,25C94,20.0294 89.9706,16 85,16C80.0294,16 76,20.0294 76,25C76,29.9706 80.0294,34 85,34Z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="10"
+        android:strokeLineCap="round"
+        android:pathData="M30,55C38,78 82,78 90,55" />
+</vector>

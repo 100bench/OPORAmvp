@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Exact 40x40 agent-face vector exported from Figma node 5:2. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="40dp"
+    android:height="40dp"
+    android:viewportWidth="40"
+    android:viewportHeight="40">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M13,17.8C14.5464,17.8 15.8,16.5464 15.8,15C15.8,13.4536 14.5464,12.2 13,12.2C11.4536,12.2 10.2,13.4536 10.2,15C10.2,16.5464 11.4536,17.8 13,17.8Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M27,17.8C28.5464,17.8 29.8,16.5464 29.8,15C29.8,13.4536 28.5464,12.2 27,12.2C25.4536,12.2 24.2,13.4536 24.2,15C24.2,16.5464 25.4536,17.8 27,17.8Z" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:pathData="M10.5,24.5C13.1,28.1 16.2,30 20,30C23.8,30 26.9,28.1 29.5,24.5" />
+</vector>
