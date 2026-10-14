@@ -8,6 +8,8 @@ __pycache__/
 *.pyc
 .DS_Store
 .venv/
+.worktrees/
+.superpowers/
 
 # Android and ScreenSaathi specific ignores
 local.properties
