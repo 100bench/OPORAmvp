@@ -3,6 +3,7 @@ package com.screensaathi.session
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 /**
  * The debug panel is the only usable triage tool on device. These tests pin the
@@ -38,6 +39,18 @@ class VoiceDebugTest {
     fun `negative confidence renders as fallback`() {
         assertTrue(VoiceDebug(confidence = -1.0).toPanel().contains("conf: fallback"))
         assertTrue(VoiceDebug(confidence = 0.42).toPanel().contains("conf: 0.42"))
+    }
+
+    @Test
+    fun `confidence formatting is stable under Russian locale`() {
+        val previous = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ru-RU"))
+
+            assertTrue(VoiceDebug(confidence = 0.42).toPanel().contains("conf: 0.42"))
+        } finally {
+            Locale.setDefault(previous)
+        }
     }
 
     @Test

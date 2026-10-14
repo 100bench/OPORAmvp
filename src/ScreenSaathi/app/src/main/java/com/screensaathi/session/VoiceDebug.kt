@@ -1,6 +1,7 @@
 package com.screensaathi.session
 
 import com.screensaathi.sarvam.Language
+import java.util.Locale
 
 /**
  * One voice turn's diagnostics, accumulated and rendered as a single panel.
@@ -47,7 +48,7 @@ data class VoiceDebug(
             line("latency", "stt ${sttMs ?: "-"}ms  plan ${planMs ?: "-"}ms")
         }
         confidence?.let {
-            line("conf", if (it < 0) "fallback" else String.format("%.2f", it))
+            line("conf", if (it < 0) "fallback" else String.format(Locale.ROOT, "%.2f", it))
         }
         readerBound?.let { line("reader", if (it) "bound" else "NULL — re-toggle in Settings") }
         if (screenPackage != null || elementCount != null) {
