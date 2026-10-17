@@ -1,0 +1,43 @@
+{
+  "id": "samsung_settings_font_size",
+  "goal": "Увеличить шрифт",
+  "package_name": "com.android.settings",
+  "app_label": "Системные настройки",
+  "settled": true,
+  "expected_phase": "GUIDING_STEP",
+  "expected_planner_calls": 1,
+  "anti_hardcode_tokens": [
+    "samsung_settings_font_size",
+    "com.android.settings",
+    "Системные настройки",
+    "font_size",
+    "Размер и стиль шрифта"
+  ],
+  "planner_result": {
+    "instruction": "Нажмите «Размер и стиль шрифта».",
+    "target_resource_id": "font_size",
+    "target_index": 1,
+    "target_text": "Размер и стиль шрифта",
+    "action_type": "guide"
+  },
+  "elements": [
+    {
+      "index": 0,
+      "resource_id": "screen_title",
+      "text": "Дисплей",
+      "class_name": "android.widget.TextView",
+      "bounds": [48, 120, 500, 220],
+      "clickable": false,
+      "editable": false
+    },
+    {
+      "index": 1,
+      "resource_id": "font_size",
+      "text": "Размер и стиль шрифта",
+      "class_name": "android.widget.LinearLayout",
+      "bounds": [0, 620, 1080, 780],
+      "clickable": true,
+      "editable": false
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "id": "yandex_go_destination",
+  "goal": "Заказать такси",
+  "package_name": "ru.yandex.taxi",
+  "app_label": "Яндекс Go",
+  "settled": true,
+  "expected_phase": "GUIDING_STEP",
+  "expected_planner_calls": 1,
+  "anti_hardcode_tokens": [
+    "yandex_go_destination",
+    "ru.yandex.taxi",
+    "Яндекс Go",
+    "ride_destination_control",
+    "Куда"
+  ],
+  "planner_result": {
+    "instruction": "Нажмите «Куда».",
+    "target_resource_id": "ride_destination_control",
+    "target_index": 1,
+    "target_text": "Куда",
+    "action_type": "guide"
+  },
+  "elements": [
+    {
+      "index": 0,
+      "resource_id": "title",
+      "text": "Поездка",
+      "class_name": "android.widget.TextView",
+      "bounds": [40, 180, 360, 250],
+      "clickable": false,
+      "editable": false
+    },
+    {
+      "index": 1,
+      "resource_id": "ride_destination_control",
+      "text": "Куда",
+      "content_description": "Куда",
+      "class_name": "android.widget.Button",
+      "bounds": [48, 320, 1032, 450],
+      "clickable": true,
+      "editable": false
+    }
+  ]
+}

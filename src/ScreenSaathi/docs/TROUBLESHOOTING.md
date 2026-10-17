@@ -10,6 +10,7 @@
 | Stopped working after reinstall | Android disables the Accessibility Service on every reinstall. Re-enable it — this is platform behaviour, not a bug |
 | Home button doesn't open ScreenSaathi | Settings → Apps → Default apps → Home app → ScreenSaathi |
 | Nothing happens when speaking | Keep `scripts/openai_proxy.py` running and repeat `adb reverse tcp:8787 tcp:8787` after reconnecting USB |
+| A visible control is never highlighted | The app uses only the Accessibility UI tree. Canvas/OpenGL, secure windows, and poorly semantic WebView/Compose surfaces may expose no target; continue manually instead of expecting a screenshot fallback |
 
 ## For developers — misleading device state
 
@@ -63,6 +64,13 @@ suspiciously blank.
 **PhonePe (and similar apps) can present their own security lock** after the
 screen has been idle. This is not bypassed by design — unlock it manually
 and continue the test.
+
+**An empty or unusable UI tree is an expected fail-safe state.** Before filing a
+resolver bug, trigger `com.screensaathi.DUMP_SCREEN` and inspect the output
+locally. If the intended control has no visible semantic node, the tree-only MVP
+cannot point to it. Never commit that raw dump; reduce it to a synthetic,
+de-identified JSON fixture as described in `docs/DEVELOPMENT.md`. Do not add a
+package-specific production route merely to make one fixture pass.
 
 ## Build failures
 

@@ -1,0 +1,43 @@
+{
+  "id": "unknown_app_ordinary",
+  "goal": "Открыть справку",
+  "package_name": "org.example.unlisted",
+  "app_label": "Неизвестное приложение",
+  "settled": true,
+  "expected_phase": "GUIDING_STEP",
+  "expected_planner_calls": 1,
+  "anti_hardcode_tokens": [
+    "unknown_app_ordinary",
+    "org.example.unlisted",
+    "Неизвестное приложение",
+    "unknown_help_control",
+    "Справка"
+  ],
+  "planner_result": {
+    "instruction": "Нажмите «Справка».",
+    "target_resource_id": "unknown_help_control",
+    "target_index": 1,
+    "target_text": "Справка",
+    "action_type": "guide"
+  },
+  "elements": [
+    {
+      "index": 0,
+      "resource_id": "heading",
+      "text": "Разделы",
+      "class_name": "android.widget.TextView",
+      "bounds": [48, 160, 600, 240],
+      "clickable": false,
+      "editable": false
+    },
+    {
+      "index": 1,
+      "resource_id": "unknown_help_control",
+      "text": "Справка",
+      "class_name": "android.widget.Button",
+      "bounds": [48, 520, 1032, 660],
+      "clickable": true,
+      "editable": false
+    }
+  ]
+}

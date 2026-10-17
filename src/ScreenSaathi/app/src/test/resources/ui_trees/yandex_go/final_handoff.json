@@ -1,0 +1,43 @@
+{
+  "id": "yandex_go_final_handoff",
+  "goal": "Проверить заказ",
+  "package_name": "ru.yandex.taxi",
+  "app_label": "Яндекс Go",
+  "settled": true,
+  "expected_phase": "SAFE_HANDOFF",
+  "expected_planner_calls": 0,
+  "anti_hardcode_tokens": [
+    "yandex_go_final_handoff",
+    "ru.yandex.taxi",
+    "Яндекс Go",
+    "ride_final_confirm_control",
+    "Подтвердить заказ"
+  ],
+  "planner_result": {
+    "instruction": "Проверьте итог самостоятельно.",
+    "target_resource_id": "ride_final_confirm_control",
+    "target_index": 1,
+    "target_text": "Подтвердить заказ",
+    "action_type": "guide"
+  },
+  "elements": [
+    {
+      "index": 0,
+      "resource_id": "summary",
+      "text": "Проверьте детали",
+      "class_name": "android.widget.TextView",
+      "bounds": [48, 260, 900, 340],
+      "clickable": false,
+      "editable": false
+    },
+    {
+      "index": 1,
+      "resource_id": "ride_final_confirm_control",
+      "text": "Подтвердить заказ",
+      "class_name": "android.widget.Button",
+      "bounds": [48, 1780, 1032, 1920],
+      "clickable": true,
+      "editable": false
+    }
+  ]
+}

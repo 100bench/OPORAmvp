@@ -75,6 +75,43 @@ The no-screenshot/Russian/banking boundary has its own focused suite:
   --tests 'com.screensaathi.sarvam.LanguageTest'
 ```
 
+### UI-tree acceptance fixtures
+
+The fixtures under `app/src/test/resources/ui_trees/` are independent,
+synthetic screen samples. They are not ordered scripts and production code must
+not branch on their package names, case ids or sequence. The acceptance harness
+feeds every sample through the real local safety gate, sanitizer, a read-only
+planner fake, target resolver and scenario reducer:
+
+```bash
+./gradlew testDebugUnitTest \
+  --tests 'com.screensaathi.evals.UniversalGuidanceAcceptanceTest'
+```
+
+To add a regression fixture:
+
+1. Reproduce the screen on a development device and inspect the Accessibility
+   tree locally with `com.screensaathi.DUMP_SCREEN` or Android tooling. Do not
+   take or commit a screenshot.
+2. Create a new, independent JSON sample containing only the minimum structural
+   roles, synthetic labels, resource ids, state flags and approximate synthetic
+   bounds required to reproduce the behavior.
+3. Remove names, addresses, phone numbers, account/order contents, tokens and
+   editable values. Replace the package/app label when its real identity is not
+   needed for a named local safety rule.
+4. Add the resource path to `UniversalGuidanceAcceptanceTest.FIXTURE_PATHS` and
+   declare the expected local phase. Ordinary readable trees may reach exactly
+   one `guide` target; auth, banking, payment and final-action trees must reach
+   local handoff with zero planner calls; unusable trees must fail honestly.
+5. If a production package exception is genuinely required, put it only in a
+   named safety/compatibility policy and add a focused reason-bearing test. Do
+   not add an app or screen-sequence branch to the guidance loop.
+
+Canvas/OpenGL surfaces, secure windows and poorly semantic WebView or Compose
+trees may expose no reliable control. The tree-only MVP does not guess and has
+no screenshot fallback: it asks the user to scroll/continue manually or enters
+safe handoff when local risk evidence is present.
+
 ## Install and run on a device
 
 **A physical Android device is required.** Accessibility services, overlay
@@ -148,7 +185,7 @@ Checked 2026-10-17 with APK commit `b49d85a` on serial `RF8MA183F5A`:
   `adb reverse tcp:8787 tcp:8787` was active and `ScreenReaderService` remained
   enabled and bound after the in-place update.
 - The Task 10 tree-only build, SHA-256
-  `240fd091097f4674ea292f2cf7db461628eac39435e832ea8cf6508f6e52103d`,
+  `55b44a7920b4916b0cb7c5ef0547c5a1d1a52267be5404d6d8912faa323a4f4a`,
   was then installed in place. USB reverse remained active. Android reported
   accessibility `capabilities=1` (window-content retrieval only), confirming
   the installed service no longer requests screenshot capability.
