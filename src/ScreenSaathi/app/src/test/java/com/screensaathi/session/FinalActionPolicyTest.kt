@@ -1,0 +1,58 @@
+package com.screensaathi.session
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class FinalActionPolicyTest {
+    @Test
+    fun `final controls and consequential submissions are detected`() {
+        listOf(
+            "Оплатить",
+            "Заказать за 500 ₽",
+            "Оформить заказ",
+            "Подтвердить заказ",
+            "Подать заявление",
+            "Отправить заявление",
+            "confirm_order_button",
+            "Submit application",
+        ).forEach { value ->
+            assertTrue(value, FinalActionPolicy.isFinalAction(value))
+        }
+    }
+
+    @Test
+    fun `benign history messaging and choice controls stay allowed`() {
+        listOf(
+            "История заказов",
+            "purchase_history",
+            "Purchase history",
+            "Отправить сообщение",
+            "send_message",
+            "Подтвердить выбор",
+            "confirm_selection",
+        ).forEach { value ->
+            assertFalse(value, FinalActionPolicy.isFinalAction(value))
+        }
+    }
+
+    @Test
+    fun `directives are detected after polite and explanatory lead ins`() {
+        listOf(
+            "Нажмите «Оплатить»",
+            "Чтобы продолжить, нажмите «Оплатить»",
+            "Пожалуйста, выберите «Подать заявление»",
+            "When ready, tap Pay now",
+        ).forEach { value ->
+            assertTrue(value, FinalActionPolicy.containsFinalActionInstruction(value))
+        }
+
+        listOf(
+            "На экране есть кнопка «Оплатить».",
+            "Откройте пункт «Отправить сообщение».",
+            "Выберите «Подтвердить выбор».",
+        ).forEach { value ->
+            assertFalse(value, FinalActionPolicy.containsFinalActionInstruction(value))
+        }
+    }
+}

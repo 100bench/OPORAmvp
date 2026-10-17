@@ -580,7 +580,13 @@ class SessionController(
             language = lastLanguage))
 
         val tp0 = SystemClock.uptimeMillis()
-        val plan = planner.planOpenEnded(intent, snap, lastLanguage, completedStep)
+        val plan = planner.planOpenEnded(
+            intent,
+            snap,
+            lastLanguage,
+            completedStep,
+            guidanceStepNumber,
+        )
         val planMs = SystemClock.uptimeMillis() - tp0
         
         if (!isCurrent(turn)) return

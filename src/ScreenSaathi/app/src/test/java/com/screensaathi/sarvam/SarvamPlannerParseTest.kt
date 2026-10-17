@@ -5,6 +5,7 @@ import com.screensaathi.task.TaskStep
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -131,5 +132,204 @@ class SarvamPlannerParseTest {
     @Test
     fun `an empty response is rejected`() {
         assertNull(SarvamPlanner.parse("{}", task, "en-IN"))
+    }
+
+    @Test
+    fun `malformed guidance JSON is an invalid response`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome("{not-json", "Найти профиль")
+
+        assertFailure(PlannerFailureKind.INVALID_RESPONSE, outcome)
+    }
+
+    @Test
+    fun `forbidden executable action is rejected`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":false,"action_type":"click",
+                    "target":{"resource_id":"profile","text":"Профиль"},
+                    "instruction":"Откройте профиль","language":"ru-RU",
+                    "confidence":0.9,"reason":"target visible"}"""
+            ),
+            "Найти профиль",
+        )
+
+        assertFailure(PlannerFailureKind.INVALID_RESPONSE, outcome)
+    }
+
+    @Test
+    fun `guide without a semantic target is rejected`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":false,"action_type":"guide",
+                    "instruction":"Откройте профиль","language":"ru-RU",
+                    "confidence":0.9,"reason":"missing target"}"""
+            ),
+            "Найти профиль",
+        )
+
+        assertFailure(PlannerFailureKind.INVALID_RESPONSE, outcome)
+    }
+
+    @Test
+    fun `final order or payment target is rejected`() {
+        listOf(
+            "Оплатить",
+            "Заказать",
+            "Оформить",
+            "Подтвердить",
+            "Купить",
+            "Отправить заявление",
+            "Place order",
+            "Pay now",
+            "Checkout",
+            "Submit application",
+        ).forEach { label ->
+            val outcome = SarvamPlanner.parseGuidanceOutcome(
+                guidanceResponse(
+                    """{"is_done":false,"action_type":"guide",
+                        "target":{"resource_id":"final_action","text":${org.json.JSONObject.quote(label)}},
+                        "instruction":"Выберите указанную кнопку","language":"ru-RU",
+                        "confidence":0.95,"reason":"final button"}"""
+                ),
+                "Завершить действие",
+            )
+
+            assertFailure(PlannerFailureKind.INVALID_RESPONSE, outcome)
+        }
+    }
+
+    @Test
+    fun `benign order history target remains guidable`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":false,"action_type":"guide",
+                    "target":{"resource_id":"order_history","text":"История заказов"},
+                    "instruction":"Откройте «История заказов»","language":"ru-RU",
+                    "confidence":0.9,"reason":"visible target"}"""
+            ),
+            "Посмотреть старые заказы",
+        )
+
+        assertTrue(outcome is PlannerOutcome.Success)
+    }
+
+    @Test
+    fun `natural final action instructions are rejected for guide and answer`() {
+        val unsafe = listOf(
+            """{"is_done":false,"action_type":"guide",
+                "target":{"resource_id":"primary_button"},
+                "instruction":"Нажмите «Оплатить»","language":"ru-RU",
+                "confidence":0.9,"reason":"visible target"}""",
+            """{"is_done":false,"action_type":"guide",
+                "target":{"resource_id":"primary_button"},
+                "instruction":"Выберите «Заказать»","language":"ru-RU",
+                "confidence":0.9,"reason":"visible target"}""",
+            """{"is_done":true,"action_type":"answer",
+                "instruction":"Нажмите «Оплатить»","language":"ru-RU",
+                "confidence":0.9,"reason":"direct answer"}""",
+            """{"is_done":true,"action_type":"answer",
+                "instruction":"Чтобы продолжить, нажмите «Оплатить»","language":"ru-RU",
+                "confidence":0.9,"reason":"direct answer"}""",
+            """{"is_done":false,"action_type":"guide",
+                "target":{"resource_id":"primary_button","text":"Подать заявление"},
+                "instruction":"Выберите указанную кнопку","language":"ru-RU",
+                "confidence":0.9,"reason":"visible target"}""",
+        )
+
+        unsafe.forEach { args ->
+            assertFailure(
+                PlannerFailureKind.INVALID_RESPONSE,
+                SarvamPlanner.parseGuidanceOutcome(guidanceResponse(args), "Завершить заказ"),
+            )
+        }
+    }
+
+    @Test
+    fun `descriptive answer may name a final control without directing the user`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":true,"action_type":"answer",
+                    "instruction":"На экране есть кнопка «Оплатить» и указан итог заказа.",
+                    "language":"ru-RU","confidence":0.9,"reason":"screen description"}"""
+            ),
+            "Что написано на экране?",
+        )
+
+        assertTrue(outcome is PlannerOutcome.Success)
+    }
+
+    @Test
+    fun `guidance parser enforces the declared schema`() {
+        val invalidArguments = listOf(
+            // Required fields cannot be silently defaulted.
+            """{"action_type":"guide","target":{"text":"Профиль"},
+                "instruction":"Откройте профиль","language":"ru-RU","confidence":0.9,"reason":"visible"}""",
+            // Unknown and legacy flat fields are outside the new contract.
+            """{"is_done":false,"action_type":"guide","target_text":"Профиль",
+                "instruction":"Откройте профиль","language":"ru-RU","confidence":0.9,"reason":"visible"}""",
+            """{"is_done":false,"action_type":"guide","target":{"text":"Профиль"},
+                "instruction":"Откройте профиль","language":"ru-RU","confidence":0.9,"reason":"visible","extra":"x"}""",
+            // Types, range and action/done consistency are strict.
+            """{"is_done":"false","action_type":"guide","target":{"text":"Профиль"},
+                "instruction":"Откройте профиль","language":"ru-RU","confidence":0.9,"reason":"visible"}""",
+            """{"is_done":false,"action_type":"guide","target":{"text":"Профиль"},
+                "instruction":"Откройте профиль","language":"ru-RU","confidence":1.1,"reason":"visible"}""",
+            """{"is_done":true,"action_type":"guide","target":{"text":"Профиль"},
+                "instruction":"Откройте профиль","language":"ru-RU","confidence":0.9,"reason":"visible"}""",
+            """{"is_done":false,"action_type":"answer",
+                "instruction":"Профиль находится в меню","language":"ru-RU","confidence":0.9,"reason":"answer"}""",
+        )
+
+        invalidArguments.forEach { args ->
+            assertFailure(
+                PlannerFailureKind.INVALID_RESPONSE,
+                SarvamPlanner.parseGuidanceOutcome(guidanceResponse(args), "Найти профиль"),
+            )
+        }
+    }
+
+    @Test
+    fun `guidance parser accepts exactly one tool call`() {
+        val one = """{"function":{"name":"set_next_step","arguments":${
+            org.json.JSONObject.quote(
+                """{"is_done":true,"action_type":"answer","instruction":"Готово.",
+                    "language":"ru-RU","confidence":0.9,"reason":"answer"}"""
+            )
+        }}}"""
+        val raw = """{"choices":[{"message":{"tool_calls":[$one,$one]}}]}"""
+
+        assertFailure(
+            PlannerFailureKind.INVALID_RESPONSE,
+            SarvamPlanner.parseGuidanceOutcome(raw, "Что дальше?"),
+        )
+    }
+
+    @Test
+    fun `valid one shot answer needs no target`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":true,"action_type":"answer",
+                    "instruction":"История заказов находится в разделе «Профиль».",
+                    "language":"ru-RU","confidence":0.93,"reason":"visible navigation"}"""
+            ),
+            "Где история заказов?",
+        )
+
+        assertTrue(outcome is PlannerOutcome.Success)
+        val plan = (outcome as PlannerOutcome.Success).plan
+        assertEquals("answer", plan.actionType)
+        assertTrue(plan.isDone)
+        assertEquals("", plan.targetResourceId)
+        assertEquals("", plan.targetText)
+    }
+
+    private fun guidanceResponse(args: String): String =
+        """{"choices":[{"message":{"tool_calls":[{"function":{"name":"set_next_step","arguments":${
+            org.json.JSONObject.quote(args)
+        }}}]}}]}"""
+
+    private fun assertFailure(kind: PlannerFailureKind, outcome: PlannerOutcome) {
+        assertTrue(outcome is PlannerOutcome.Failure)
+        assertEquals(kind, (outcome as PlannerOutcome.Failure).kind)
     }
 }

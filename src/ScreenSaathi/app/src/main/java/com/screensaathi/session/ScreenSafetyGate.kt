@@ -53,7 +53,7 @@ object ScreenSafetyGate {
                     "На экране запрашиваются платёжные данные. Продолжите самостоятельно.",
                 )
             }
-            if (FINAL_ACTION.containsMatchIn(normalized)) {
+            if (FinalActionPolicy.isFinalAction(normalized)) {
                 return safeHandoff(
                     ScreenRiskCategory.FINAL_ACTION,
                     "Дальше возможно подтверждение заказа или оплаты. Проверьте всё и продолжите самостоятельно.",
@@ -108,11 +108,6 @@ object ScreenSafetyGate {
         "(?:^|[^\\p{L}\\p{N}])(?:cvv|cvc|номер карты|срок действия карты|данные карты|card number)(?:$|[^\\p{L}\\p{N}])",
         setOf(RegexOption.IGNORE_CASE),
     )
-    private val FINAL_ACTION = Regex(
-        "(?:^|[^\\p{L}\\p{N}])(?:оплатить|оплата|подтвердить оплату|оформить заказ|подтвердить заказ|place order|pay now|checkout|confirm purchase)(?:$|[^\\p{L}\\p{N}])",
-        setOf(RegexOption.IGNORE_CASE),
-    )
-
     private val BANK_PACKAGES = setOf(
         "ru.sberbankmobile",
         "com.idamob.tinkoff.android",

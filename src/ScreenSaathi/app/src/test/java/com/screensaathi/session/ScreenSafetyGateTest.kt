@@ -48,7 +48,16 @@ class ScreenSafetyGateTest {
             "CVV",
             "Оплатить 1 290 ₽",
             "Оформить заказ",
+            "Заказать",
+            "Оформить",
+            "Подтвердить",
+            "Купить",
+            "Отправить заявление",
+            "Подать заявление",
+            "Оформление заказа",
+            "Подтверждение оплаты",
             "Place order",
+            "Submit application",
         ).forEach { raw ->
             val assessment = ScreenSafetyGate.assess(snapshot(element(text = raw)))
             assertEquals(raw, ScreenDisposition.SAFE_HANDOFF, assessment.disposition)
@@ -72,7 +81,12 @@ class ScreenSafetyGateTest {
     @Test
     fun `ordinary screen is allowed and assessment cannot carry a tree`() {
         val assessment = ScreenSafetyGate.assess(
-            snapshot(element(text = "История заказов"))
+            snapshot(
+                element(text = "История заказов"),
+                element(text = "Purchase history", resourceId = "purchase_history"),
+                element(text = "Отправить сообщение", resourceId = "send_message"),
+                element(text = "Подтвердить выбор", resourceId = "confirm_selection"),
+            )
         )
 
         assertEquals(ScreenDisposition.ALLOW, assessment.disposition)
@@ -88,11 +102,12 @@ class ScreenSafetyGateTest {
 
     private fun element(
         text: String,
+        resourceId: String = "field",
         password: Boolean = false,
         inputType: Int = 0,
     ) = ScreenElement(
         index = 0,
-        resourceId = "field",
+        resourceId = resourceId,
         text = text,
         className = "EditText",
         bounds = Rect(0, 0, 100, 100),

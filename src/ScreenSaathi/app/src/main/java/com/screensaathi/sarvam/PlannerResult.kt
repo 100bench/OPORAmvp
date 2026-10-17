@@ -1,5 +1,17 @@
 package com.screensaathi.sarvam
 
+enum class PlannerFailureKind {
+    NETWORK,
+    INVALID_RESPONSE,
+    REMOTE,
+    CONFIGURATION,
+}
+
+sealed interface PlannerOutcome {
+    data class Success(val plan: PlannerResult) : PlannerOutcome
+    data class Failure(val kind: PlannerFailureKind, val reason: String) : PlannerOutcome
+}
+
 /**
  * In-memory form of the FROZEN planner contract (contracts/planner.schema.json).
  * No field is ever removed after M1; only optional fields may be added.
