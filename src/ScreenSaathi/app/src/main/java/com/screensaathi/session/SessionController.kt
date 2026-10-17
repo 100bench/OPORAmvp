@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
-import com.screensaathi.circle.AccessibilityScreenCapture
 import com.screensaathi.circle.CircleContext
 import com.screensaathi.circle.CircleIntent
 import com.screensaathi.circle.CircleSession
@@ -20,6 +19,7 @@ import com.screensaathi.circle.SelectionShape
 import com.screensaathi.device.DeviceContextProvider
 import androidx.core.content.ContextCompat
 import com.screensaathi.AppLauncher
+import com.screensaathi.R
 import com.screensaathi.SaathiApp
 import com.screensaathi.ScreenReaderService
 import com.screensaathi.overlay.DecisionButtons
@@ -109,6 +109,8 @@ class SessionController(
     private val resumeCapsules: ResumeCapsuleStore =
         (context.applicationContext as? SaathiApp)?.resumeCapsuleStore
             ?: AndroidResumeCapsuleStore(context)
+    private val voiceSafetyBoundary = VoiceCaptureSafetyBoundary(::currentScreenSafetyAssessment)
+    private val voiceCaptureState = VoiceCaptureState(voiceSafetyBoundary)
 
     /** The app-agnostic reducer/planner loop used by all new text and voice goals. */
     private val universalLoop: UniversalGuidanceLoop by lazy {
@@ -137,21 +139,11 @@ class SessionController(
     @Volatile private var pendingResumeCapsule: ResumeCapsule? = null
     private val screenObservationId = AtomicInteger(0)
 
-    @Volatile private var isRecording = false
-
-    /**
-     * The language the user last spoke, as detected by Saaras. Everything the
-     * assistant says is chosen for this. It starts at [Language.DEFAULT] rather
-     * than a guessed "hi-IN": before anyone has spoken we have no evidence, and
-     * English is the one language every authored string exists in.
-     */
+    /** User-visible language is fixed to Russian for this MVP. */
     @Volatile private var lastLanguage = Language.APP_DEFAULT
 
     /** Set by [onStopTapped]; cleared as soon as the user engages again. */
     @Volatile private var stopped = false
-
-    /** Turn that owns the in-progress capture, so stop() reads the right file. */
-    @Volatile private var recordingTurn = -1
 
     /**
      * Monotonic turn counter. Bumped by every user action; background work that
@@ -217,7 +209,7 @@ class SessionController(
      * to the one recorder that owns the microphone — the overlay never opens
      * its own capture.
      */
-    fun micLevel(): Float = if (isRecording) recorder.level else 0f
+    fun micLevel(): Float = if (voiceCaptureState.isListening()) recorder.level else 0f
 
     /** Offer a valid process-restoration capsule after the overlay is visible. */
     fun offerResumeIfAvailable() {
@@ -245,7 +237,7 @@ class SessionController(
     }
 
     fun onMicTapped() {
-        if (!isRecording) startListening() else stopAndProcess()
+        if (!voiceCaptureState.isListening()) startListening() else stopAndProcess()
     }
 
     /** Text and voice enter the same intent path; text simply skips STT. */
@@ -441,7 +433,7 @@ class SessionController(
         }
         if (e.task.id == "open_ended") {
             bg.post {
-                processOpenEndedNext(turn, e.task.title, null)
+                processOpenEndedNext(turn, e.task.title)
             }
             return
         }
@@ -740,7 +732,7 @@ class SessionController(
                     OverlayCommand(
                         PillState.IDLE,
                         expanded = true,
-                        instruction = "Дальше требуется ваше личное подтверждение. Проверьте данные и продолжите самостоятельно.",
+                        instruction = context.getString(R.string.safe_handoff_message),
                         language = lastLanguage,
                         highlight = null,
                     ),
@@ -871,8 +863,8 @@ class SessionController(
      * This is the rehearsal path: it exercises the identical engine, overlay and
      * cursor code as a spoken request, minus STT. Useful on stage when the room
      * is too loud to trust a microphone, and the only way to regression-test the
-     * flow without a human voice. [language] lets a rehearsal show the Hindi or
-     * Tamil rendering without anyone having to speak it.
+     * flow without a human voice. Legacy callers may still pass [language], but
+     * [Language.normalize] keeps the rehearsal surface Russian.
      */
     fun startTaskById(taskId: String, language: String = lastLanguage) {
         val turn = newTurn()
@@ -896,10 +888,15 @@ class SessionController(
     }
 
     private fun abandonRecording(turn: Int) {
-        if (!isRecording) return
-        // The capture belongs to a turn the user has just walked away from.
-        isRecording = false
-        capture.post { recorder.stop(); purgeStaleCaptures(turn) }
+        val activeCapture = voiceCaptureState.invalidateAll()
+        if (activeCapture != null) {
+            // The capture belongs to a turn the user has just walked away from.
+            capture.post {
+                recorder.stop()
+                inputFileFor(activeCapture.turn).delete()
+                purgeStaleCaptures(turn)
+            }
+        }
     }
 
     private fun stopUniversalForReplacement(turn: Int) {
@@ -911,6 +908,66 @@ class SessionController(
     }
 
     // --- Voice loop -----------------------------------------------------------
+
+    private fun screenSafetyAssessment(snapshot: ScreenSnapshot): ScreenSafetyAssessment {
+        val appLabel = runCatching {
+            context.packageManager.getApplicationLabel(
+                context.packageManager.getApplicationInfo(snapshot.packageName, 0),
+            ).toString().trim().takeIf(String::isNotEmpty)
+        }.getOrNull()
+        return ScreenSafetyGate.assess(snapshot, appLabel)
+    }
+
+    private fun currentScreenSafetyAssessment(): ScreenSafetyAssessment? =
+        ScreenReaderService.instance?.snapshot()?.let(::screenSafetyAssessment)
+
+    /** Local-only handoff: no recording, planner call, synthesis or speech. */
+    private fun enterVoiceSafetyHandoff(turn: Int, assessment: ScreenSafetyAssessment) {
+        if (!isCurrent(turn)) return
+        val activeCapture = voiceCaptureState.invalidateAll()
+        if (activeCapture != null) {
+            capture.post {
+                recorder.stop()
+                inputFileFor(activeCapture.turn).delete()
+            }
+        }
+        if (universalActive) {
+            // stop() emits cleanup synchronously. Point emissions at the new
+            // current turn before dispatch so they cannot be discarded.
+            universalTurn = turn
+            universalLoop.stop()
+            universalActive = false
+        }
+        networkMonitor.stop()
+        player.stop()
+        bg.post { resumeCapsules.delete() }
+        clearScenarioDecisions()
+        pendingAction = null
+        currentChoices = emptyList()
+        currentHighlight = null
+        lastHighlightQuery = null
+        lastHighlightScreenSig = ""
+        awaitingResettle = false
+        circle.clear()
+        clearHighlightInstant()
+        renderIfCurrent(
+            turn,
+            OverlayCommand(
+                PillState.IDLE,
+                expanded = true,
+                instruction = assessment.explanation,
+                language = Language.APP_DEFAULT,
+                highlight = null,
+            ),
+        )
+    }
+
+    /** Stop every tree/speech path and delete a clip as soon as a protected screen appears. */
+    private fun enforceCurrentScreenSafetyBoundary(): Boolean {
+        val assessment = voiceSafetyBoundary.unsafeAssessment() ?: return false
+        enterVoiceSafetyHandoff(newTurn(), assessment)
+        return true
+    }
 
     private fun startListening(replacingUniversal: Boolean = true) {
         val turn = newTurn()
@@ -924,6 +981,11 @@ class SessionController(
         stopped = false
         pendingAction = null
         currentDecisionButtons = null
+
+        voiceSafetyBoundary.unsafeAssessment()?.let { assessment ->
+            enterVoiceSafetyHandoff(turn, assessment)
+            return
+        }
 
         // A denied microphone used to fail silently: recorder.start() returned
         // false and the app quietly ran the deterministic task, so the user was
@@ -944,10 +1006,17 @@ class SessionController(
             }
             return
         }
+        val activeCapture = when (val start = voiceCaptureState.begin(turn)) {
+            is VoiceCaptureStart.Blocked -> {
+                enterVoiceSafetyHandoff(turn, start.assessment)
+                return
+            }
+            is VoiceCaptureStart.Started -> start.capture
+        }
+        val captureToken = activeCapture.token
+
         // Flip the pill first: the user must see "Listening…" the instant they
         // tap, not after the capture thread has drained a pending stop().
-        isRecording = true
-        recordingTurn = turn
         currentHighlight = null
         renderIfCurrent(turn, OverlayCommand(PillState.LISTENING, expanded = true,
             instruction = Phrases.get(Phrases.Key.LISTENING, lastLanguage).text,
@@ -955,8 +1024,41 @@ class SessionController(
 
         capture.post {
             purgeStaleCaptures(turn)
-            if (recorder.start(inputFileFor(turn))) return@post
-            isRecording = false
+            if (!voiceCaptureState.isCurrent(captureToken, VoiceCapturePhase.STARTING)) {
+                inputFileFor(turn).delete()
+                return@post
+            }
+            var started = false
+            val assessment = voiceSafetyBoundary.runIfAllowed {
+                if (voiceCaptureState.isCurrent(captureToken, VoiceCapturePhase.STARTING)) {
+                    started = recorder.start(inputFileFor(turn))
+                }
+            }
+            if (assessment != null) {
+                // The safety observation belongs to this start attempt. If a
+                // newer attempt replaced it while the capture queue was busy,
+                // the stale callback must leave the newer microphone alone.
+                if (!voiceCaptureState.isCurrent(captureToken, VoiceCapturePhase.STARTING)) {
+                    inputFileFor(turn).delete()
+                    return@post
+                }
+                if (voiceCaptureState.invalidateIfOwned(captureToken) == null) return@post
+                enterVoiceSafetyHandoff(turn, assessment)
+                return@post
+            }
+            if (started && voiceCaptureState.markRecording(captureToken)) return@post
+            if (started) {
+                recorder.stop()
+                inputFileFor(turn).delete()
+                return@post
+            }
+            // A quick second tap may have moved STARTING → STOPPING before
+            // AudioRecord was created. The queued stop owns that normal path;
+            // do not turn it into a microphone error or invalidate its token.
+            if (!voiceCaptureState.isCurrent(captureToken, VoiceCapturePhase.STARTING)) {
+                return@post
+            }
+            if (voiceCaptureState.invalidateIfOwned(captureToken) == null) return@post
             val message = "Не удалось включить микрофон. Попробуйте текстовый ввод."
             if (!restoreRepeatRecognitionDecision(turn, message)) {
                 showLocalMessage(turn, message, PillState.ERROR)
@@ -975,34 +1077,74 @@ class SessionController(
         // A ceiling makes one tap sufficient. Tapping again still stops early,
         // so this only ever adds an ending where there wasn't one.
         bg.postDelayed({
-            if (isRecording && recordingTurn == turn) stopAndProcess()
+            if (voiceCaptureState.isListening(turn)) stopAndProcess()
         }, MAX_UTTERANCE_MS)
     }
 
     private fun stopAndProcess() {
-        isRecording = false
         // The capture's own turn, not whatever is current — they diverge if
         // anything opened a turn while the user was still speaking.
-        val turn = recordingTurn
+        val activeCapture = voiceCaptureState.beginStopping() ?: return
+        val turn = activeCapture.turn
+        val captureToken = activeCapture.token
+
+        voiceSafetyBoundary.unsafeAssessment()?.let { assessment ->
+            if (voiceCaptureState.invalidateIfOwned(captureToken) == null) return
+            capture.post {
+                recorder.stop()
+                inputFileFor(turn).delete()
+            }
+            enterVoiceSafetyHandoff(turn, assessment)
+            return
+        }
+
         render(OverlayCommand(PillState.THINKING, expanded = true,
             instruction = Phrases.get(Phrases.Key.THINKING, lastLanguage).text,
             language = lastLanguage))
 
         capture.post {
             recorder.stop()
-            val heldMs = recorder.recordedMs
-            bg.post { process(turn, heldMs) }
+            val wav = inputFileFor(turn)
+            val heldMs = if (wav.exists()) recorder.recordedMs else 0L
+            if (!voiceCaptureState.markProcessing(captureToken)) {
+                wav.delete()
+                return@post
+            }
+            bg.post { process(turn, heldMs, captureToken) }
         }
     }
 
     /** Runs on [bg]. The whole network half of a voice turn. */
-    private fun process(turn: Int, heldMs: Long) {
+    private fun process(turn: Int, heldMs: Long, captureToken: VoiceCaptureToken) {
         val wav = inputFileFor(turn)
+
+        if (
+            !voiceCaptureState.isCurrent(captureToken, VoiceCapturePhase.PROCESSING) ||
+            !isCurrent(turn)
+        ) {
+            wav.delete()
+            return
+        }
+
+        voiceSafetyBoundary.unsafeAssessment()?.let { assessment ->
+            if (!voiceCaptureState.isCurrent(captureToken, VoiceCapturePhase.PROCESSING)) {
+                wav.delete()
+                return
+            }
+            if (voiceCaptureState.invalidateIfOwned(captureToken) == null) {
+                wav.delete()
+                return
+            }
+            wav.delete()
+            enterVoiceSafetyHandoff(turn, assessment)
+            return
+        }
 
         // A double-tapped mic leaves a header-only WAV. Sending it costs a full
         // round trip to be told nothing was said, which reads on stage as the
         // app hanging.
         if (heldMs < MIN_SPEECH_MS) {
+            voiceCaptureState.finishIfOwned(captureToken)
             publishDebug(turn) { it.copy(note = "too short (${heldMs}ms) — no STT call") }
             wav.delete()
             if (!restoreRepeatRecognitionDecision(
@@ -1018,12 +1160,43 @@ class SessionController(
         // Timed around the network call alone. Measuring from before
         // recorder.stop() folded in its writer-thread join (up to 1.5 s) and
         // made STT look far over budget when it was not.
+        // Last possible local check before bytes leave the device. A protected
+        // screen event invalidates the generation even while stop() is queued.
+        if (!voiceCaptureState.isCurrent(captureToken, VoiceCapturePhase.PROCESSING) ||
+            !isCurrent(turn)
+        ) {
+            wav.delete()
+            return
+        }
+        voiceSafetyBoundary.unsafeAssessment()?.let { assessment ->
+            if (!voiceCaptureState.isCurrent(captureToken, VoiceCapturePhase.PROCESSING) ||
+                !isCurrent(turn)
+            ) {
+                wav.delete()
+                return
+            }
+            if (voiceCaptureState.invalidateIfOwned(captureToken) == null) {
+                wav.delete()
+                return
+            }
+            wav.delete()
+            enterVoiceSafetyHandoff(turn, assessment)
+            return
+        }
+
         val t0 = SystemClock.uptimeMillis()
         val sttResult = stt.transcribe(wav)
         val sttMs = SystemClock.uptimeMillis() - t0
         wav.delete()
+        voiceCaptureState.finishIfOwned(captureToken)
 
         if (!isCurrent(turn)) return
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                enterVoiceSafetyHandoff(turn, assessment)
+                return
+            }
 
         if (sttResult == null) {
             publishDebug(turn) { it.copy(sttMs = sttMs, note = "STT returned nothing") }
@@ -1148,15 +1321,29 @@ class SessionController(
     private fun processOpenEndedNext(
         turn: Int,
         intent: String,
-        snapshot: ScreenSnapshot?,
         completedStep: String? = null,
     ) {
-        val snap = snapshot ?: ScreenReaderService.instance?.snapshot() ?: ScreenSnapshot.EMPTY
+        // Never plan from a snapshot captured by a previous queued callback.
+        // First prove this turn still owns the request, then read exactly one
+        // fresh tree and use that same tree for the safety gate, planner and
+        // target resolution below.
+        if (!isCurrent(turn)) return
+        val snap = ScreenReaderService.instance?.snapshot() ?: ScreenSnapshot.EMPTY
+        if (!isCurrent(turn)) return
+        screenSafetyAssessment(snap).takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                enterVoiceSafetyHandoff(turn, assessment)
+                return
+            }
         activePlanScreenSignature = snap.signature()
         
         renderIfCurrent(turn, OverlayCommand(PillState.THINKING, expanded = true,
             instruction = Phrases.get(Phrases.Key.THINKING, lastLanguage).text,
             language = lastLanguage))
+
+        // A protected-screen event opens a new turn. Check ownership at the
+        // final local boundary before any screen data leaves the device.
+        if (!isCurrent(turn)) return
 
         val tp0 = SystemClock.uptimeMillis()
         val plan = planner.planOpenEnded(
@@ -1169,6 +1356,12 @@ class SessionController(
         val planMs = SystemClock.uptimeMillis() - tp0
         
         if (!isCurrent(turn)) return
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                enterVoiceSafetyHandoff(turn, assessment)
+                return
+            }
         
         if (plan != null) {
             if (plan.isDone || plan.actionType == "answer") {
@@ -1342,6 +1535,12 @@ class SessionController(
             .toList()
 
     private fun presentStep(e: StepEngine, instruction: Spoken, turn: Int, speak: Boolean) {
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                enterVoiceSafetyHandoff(turn, assessment)
+                return
+            }
         val step = e.currentStep
         // Drop the previous step's ring before resolving this one, so a stale
         // box never lingers over an element that is no longer the target.
@@ -1402,6 +1601,13 @@ class SessionController(
                 }
 
                 val snap = ScreenReaderService.instance?.snapshot()
+                if (snap != null) {
+                    val assessment = screenSafetyAssessment(snap)
+                    if (assessment.disposition != ScreenDisposition.ALLOW) {
+                        enterVoiceSafetyHandoff(turn, assessment)
+                        return@post
+                    }
+                }
                 val currentPkg = snap?.packageName.orEmpty()
                 val expectedPkg = target.expectPackage.ifEmpty { chosenPackage }
 
@@ -1421,8 +1627,7 @@ class SessionController(
                 // step's own candidate texts carry the app's label, so the icon
                 // resolves by label through the same ranked matcher as anything
                 // else. Language-independent by construction — it matches the
-                // launcher's label, not the words the user spoke, so a Tamil
-                // request still lands on "Uber".
+                // launcher's actual label rather than inventing a package.
                 val packageMatches = when {
                     expectedPkg.isNotEmpty() ->
                         currentPkg == expectedPkg || isLauncherPackage(currentPkg)
@@ -1467,7 +1672,6 @@ class SessionController(
                         processOpenEndedNext(
                             turn,
                             lastUserRequest,
-                            snap,
                             completedStep = instruction.text,
                         )
                     }
@@ -1539,9 +1743,11 @@ class SessionController(
      */
     private val circle: CircleSession by lazy {
         CircleSession(
-            capture = AccessibilityScreenCapture(),
-            readerProvider = { ScreenReaderService.instance },
-            cacheDirProvider = { context.cacheDir },
+            snapshotProvider = {
+                ScreenReaderService.instance?.snapshot()?.takeIf { snapshot ->
+                    screenSafetyAssessment(snapshot).disposition == ScreenDisposition.ALLOW
+                }
+            },
         )
     }
 
@@ -1562,6 +1768,12 @@ class SessionController(
     /** Collapse out of the way so the assistant does not cover the target. */
     fun onSelectionModeEntered() {
         val turn = newTurn()
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                enterVoiceSafetyHandoff(turn, assessment)
+                return
+            }
         renderIfCurrent(turn, OverlayCommand(PillState.IDLE, expanded = false, highlight = null))
     }
 
@@ -1581,12 +1793,17 @@ class SessionController(
         val turn = newTurn()
         stopped = false
 
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                circle.clear()
+                enterVoiceSafetyHandoff(turn, assessment)
+                return
+            }
+
         circle.onSelectionDrawn(path, shape, lastLanguage) { ctx ->
-            // Invoked again when pixels land; only the first pass should
-            // speak, otherwise the user hears the same sentence twice.
-            if (ctx.frame != null) return@onSelectionDrawn
-            // render() marshals to the main thread itself, so this is safe
-            // from the capture callback's background thread.
+            // Tree-only resolution is synchronous and produces exactly one
+            // description. No screenshot callback can arrive later.
             describeSelection(turn, ctx)
         }
     }
@@ -1601,6 +1818,13 @@ class SessionController(
      */
     private fun describeSelection(turn: Int, ctx: CircleContext) {
         if (!isCurrent(turn)) return
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                circle.clear()
+                enterVoiceSafetyHandoff(turn, assessment)
+                return
+            }
 
         val element = ctx.target.element
         val lead = when {
@@ -1654,6 +1878,13 @@ class SessionController(
      * back to the ordinary voice path.
      */
     fun onCircleRequest(request: String): Boolean {
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                circle.clear()
+                enterVoiceSafetyHandoff(newTurn(), assessment)
+                return true
+            }
         val ctx = circle.context ?: return false
         val intent = IntentClassifier.classify(request)
 
@@ -1673,7 +1904,7 @@ class SessionController(
                     !ruling.isPermitted -> {
                         val turn = newTurn()
                         renderIfCurrent(turn, OverlayCommand(PillState.ERROR, expanded = true,
-                            instruction = ruling.reason, language = lastLanguage))
+                            instruction = ruling.userMessage, language = lastLanguage))
                     }
 
                     ruling.requiresConfirmation -> {
@@ -1683,7 +1914,7 @@ class SessionController(
                         // step — the user's own finger is the final gate.
                         val turn = newTurn()
                         renderIfCurrent(turn, OverlayCommand(PillState.GUIDING, expanded = true,
-                            instruction = ruling.reason, language = lastLanguage))
+                            instruction = ruling.userMessage, language = lastLanguage))
                         highlightTarget(label)
                     }
 
@@ -1745,7 +1976,10 @@ class SessionController(
     fun clearCircleSelection() = circle.clear()
 
     /** The live selection rendered for the planner prompt, or empty. */
-    fun circlePromptContext(): String = circle.context?.toPromptText().orEmpty()
+    fun circlePromptContext(): String {
+        val allowed = currentScreenSafetyAssessment()?.disposition == ScreenDisposition.ALLOW
+        return if (allowed) circle.context?.toPromptText().orEmpty() else ""
+    }
 
     fun clearHighlight() {
         val turn = newTurn()
@@ -1758,6 +1992,12 @@ class SessionController(
 
     fun highlightTarget(query: String) {
         val turn = newTurn()
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                enterVoiceSafetyHandoff(turn, assessment)
+                return
+            }
         stopped = false
         lastUserRequest = query
         lastHighlightQuery = query
@@ -1782,6 +2022,11 @@ class SessionController(
             if (snap == null) {
                 publishDebug(turn) { it.copy(note = "OVERLAY_CLEAR reason=no_accessibility_service") }
                 break
+            }
+            val assessment = screenSafetyAssessment(snap)
+            if (assessment.disposition != ScreenDisposition.ALLOW) {
+                enterVoiceSafetyHandoff(newTurn(), assessment)
+                return
             }
             val result = TargetResolver.resolve(query, snap)
             val hl = when (result) {
@@ -1882,6 +2127,7 @@ class SessionController(
      * thread as the poll loop it invalidates.
      */
     fun onWindowStateChanged() {
+        if (enforceCurrentScreenSafetyBoundary()) return
         scheduleUniversalScreenObservation()
 
         // Universal planning can be blocked on a network call on [bg]. Clear a
@@ -1928,6 +2174,7 @@ class SessionController(
 
     /** Debounced bridge from accessibility tree changes into the pure reducer loop. */
     fun onScreenContentChanged() {
+        if (enforceCurrentScreenSafetyBoundary()) return
         scheduleUniversalScreenObservation()
     }
 
@@ -2084,7 +2331,7 @@ class SessionController(
         }
 
         if (!isCurrent(turn) || stopped) return
-        processOpenEndedNext(turn, goal, snapshot, completedStep)
+        processOpenEndedNext(turn, goal, completedStep)
     }
 
     /** Waits for a settled post-tap tree; ordinary duplicate events stay reducer-idempotent. */
@@ -2122,7 +2369,15 @@ class SessionController(
 
     /** Runs on [speech]. Never on the thread that resolves the highlight. */
     private fun speak(spoken: Spoken, turn: Int) {
+        if (!isCurrent(turn) || stopped) return
+        currentScreenSafetyAssessment()
+            ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
+            ?.let { assessment ->
+                enterVoiceSafetyHandoff(newTurn(), assessment)
+                return
+            }
         if (!Sarvam.isConfigured()) return
+        if (!isCurrent(turn) || stopped) return
         val bytes = tts.synthesize(spoken)
         if (bytes == null) {
             if (universalActive && isCurrent(turn)) universalLoop.ttsFailed()
@@ -2161,6 +2416,9 @@ class SessionController(
         val attempts = if (step.expectPackage.isNotEmpty()) CROSS_APP_ATTEMPTS else RESOLVE_ATTEMPTS
         repeat(attempts) {
             val snap = ScreenReaderService.instance?.snapshot()
+            if (snap != null && screenSafetyAssessment(snap).disposition != ScreenDisposition.ALLOW) {
+                return null
+            }
             if (snap != null && step.expectPackage.let { it.isEmpty() || snap.packageName == it }) {
                 val bounds = when {
                     step.resourceId.isNotEmpty() -> snap.boundsForResourceId(step.resourceId)

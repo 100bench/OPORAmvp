@@ -1,144 +1,61 @@
 package com.screensaathi.sarvam
 
 /**
- * The languages ScreenSaathi will speak, and the rules for choosing one.
+ * Language policy for the Russian MVP.
  *
- * The list is the set currently exposed by the app and its planner contract.
- * Keep the planner schema, UI choices, and language reconciliation in sync
- * when adding a code.
+ * Provider responses, old rehearsal intents and legacy task assets may still
+ * contain another language label. They all cross this boundary before
+ * reaching user-visible UI or speech, so the MVP remains Russian-only.
  */
 object Language {
-
-    /** Product language for the Russian MVP. */
     const val APP_DEFAULT = "ru-RU"
+    const val DEFAULT = APP_DEFAULT
 
-    /**
-     * Used when nothing has been detected yet, and for any text we only
-     * authored in English. [Spoken] carries a language with its text so both
-     * the planner and the speech instruction can stay explicit.
-     */
-    const val DEFAULT = "en-IN"
+    /** The planner schema and user-facing surface expose Russian only. */
+    val SUPPORTED = linkedSetOf(APP_DEFAULT)
 
-    /** Languages currently supported by the app's UI and planner contract. */
-    val SUPPORTED = linkedSetOf(
-        "ru-RU", "en-IN", "hi-IN", "bn-IN", "gu-IN", "kn-IN",
-        "ml-IN", "mr-IN", "pa-IN", "ta-IN", "te-IN",
-    )
-
-    /** Endonyms — what a speaker calls their own language. Used in the UI. */
-    private val NATIVE_NAME = mapOf(
-        "ru-RU" to "Русский",
-        "en-IN" to "English",
-        "hi-IN" to "हिन्दी",
-        "bn-IN" to "বাংলা",
-        "gu-IN" to "ગુજરાતી",
-        "kn-IN" to "ಕನ್ನಡ",
-        "ml-IN" to "മലയാളം",
-        "mr-IN" to "मराठी",
-        "pa-IN" to "ਪੰਜਾਬੀ",
-        "ta-IN" to "தமிழ்",
-        "te-IN" to "తెలుగు",
-    )
-
-    /**
-     * Coerce whatever STT or the planner hands us into a code we support.
-     * Accepts a bare tag ("hi") as well as a full one ("hi-IN"), because
-     * the planner is a language model and will occasionally shorten it.
-     *
-     * everything funnels through here before reaching the UI or speech layer.
-     */
-    fun normalize(code: String?): String {
-        val raw = code?.trim()?.replace('_', '-') ?: return DEFAULT
-        if (raw.isEmpty()) return DEFAULT
-        SUPPORTED.firstOrNull { it.equals(raw, ignoreCase = true) }?.let { return it }
-        val base = raw.substringBefore('-').lowercase()
-        return SUPPORTED.firstOrNull { it.substringBefore('-') == base } ?: DEFAULT
-    }
+    fun normalize(code: String?): String = APP_DEFAULT
 
     fun isSupported(code: String?): Boolean =
-        code != null && SUPPORTED.any { it.equals(code.trim(), ignoreCase = true) }
+        code?.trim()?.equals(APP_DEFAULT, ignoreCase = true) == true
 
-    /** For the debug panel and the language chip on the card. */
-    fun nativeName(code: String): String = NATIVE_NAME[normalize(code)] ?: code
-
-    /** Script each language is actually written in. Hindi and Marathi share one. */
-    private val SCRIPT = mapOf(
-        "ru-RU" to Character.UnicodeScript.CYRILLIC,
-        "en-IN" to Character.UnicodeScript.LATIN,
-        "hi-IN" to Character.UnicodeScript.DEVANAGARI,
-        "mr-IN" to Character.UnicodeScript.DEVANAGARI,
-        "bn-IN" to Character.UnicodeScript.BENGALI,
-        "gu-IN" to Character.UnicodeScript.GUJARATI,
-        "kn-IN" to Character.UnicodeScript.KANNADA,
-        "ml-IN" to Character.UnicodeScript.MALAYALAM,
-        "pa-IN" to Character.UnicodeScript.GURMUKHI,
-        "ta-IN" to Character.UnicodeScript.TAMIL,
-        "te-IN" to Character.UnicodeScript.TELUGU,
-    )
-
-    /** First supported code written in each script; the inverse of [SCRIPT]. */
-    private val CODE_FOR_SCRIPT: Map<Character.UnicodeScript, String> =
-        SCRIPT.entries.reversed().associate { (code, script) -> script to code }
+    fun nativeName(code: String): String = "Русский"
 
     /**
-     * Scripts present in [text], with a count of characters in each.
+     * True when all prose is Russian (or contains no letters).
      *
-     * Counts every character of the script, not just `isLetter` ones. Devanagari
-     * vowel signs like "ा" and "ि" are combining marks, not letters, so a
-     * letters-only count undercounts Devanagari badly — "amount यहाँ भरिए" comes
-     * out 6 Latin to 5 Devanagari and gets called English.
+     * Latin text is accepted only when it is an exact label already grounded
+     * in the current UI tree. This keeps labels such as "Yandex Go" usable,
+     * without letting mixed model prose such as "Click … to continue" reach
+     * the Russian interface.
      */
-    private fun scriptsIn(text: String): Map<Character.UnicodeScript, Int> {
-        val counts = HashMap<Character.UnicodeScript, Int>()
-        var i = 0
-        while (i < text.length) {
-            val cp = text.codePointAt(i)
-            i += Character.charCount(cp)
-            val script = runCatching { Character.UnicodeScript.of(cp) }.getOrNull() ?: continue
-            if (script == Character.UnicodeScript.COMMON ||
-                script == Character.UnicodeScript.UNKNOWN ||
-                script == Character.UnicodeScript.INHERITED
-            ) continue
-            counts[script] = (counts[script] ?: 0) + 1
+    fun isRussianText(text: String, groundedLabels: List<String> = emptyList()): Boolean {
+        var prose = text
+        groundedLabels.asSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .sortedByDescending(String::length)
+            .forEach { label ->
+                prose = Regex(Regex.escape(label), RegexOption.IGNORE_CASE).replace(prose, " ")
+            }
+
+        var hasLetters = false
+        var hasCyrillic = false
+        var index = 0
+        while (index < prose.length) {
+            val codePoint = prose.codePointAt(index)
+            index += Character.charCount(codePoint)
+            if (!Character.isLetter(codePoint)) continue
+            hasLetters = true
+            if (Character.UnicodeScript.of(codePoint) != Character.UnicodeScript.CYRILLIC) return false
+            hasCyrillic = true
         }
-        return counts
+        return !hasLetters || hasCyrillic
     }
 
-    /**
-     * The language code that best matches [text]. The planner can sometimes label romanised
-     * Hindi as `hi-IN`, or answer in English while claiming the user's language.
-     *
-     * The rule uses **presence, not majority**.
-     *  - If the claimed language's script appears at all, keep the claim. This
-     *    is what makes code-switching work — "amount यहाँ भरिए" stays `hi-IN`,
-     *    and TTS reads the embedded English word naturally.
-     *  - Otherwise fall to whichever Indic script is actually there, so
-     *    Devanagari labelled `en-IN` is corrected rather than mispronounced.
-     *  - Failing that, romanised or English text becomes `en-IN`.
-     */
-    fun reconcile(text: String, claimed: String?): String {
-        val claim = normalize(claimed)
-        val present = scriptsIn(text)
-        if (present.isEmpty()) return claim // digits or punctuation only
-
-        SCRIPT[claim]?.let { if (present.containsKey(it)) return claim }
-
-        val nonLatin = present.entries
-            .filter { it.key != Character.UnicodeScript.LATIN }
-            .maxByOrNull { it.value }
-            ?.key
-        if (nonLatin != null) CODE_FOR_SCRIPT[nonLatin]?.let { return it }
-
-        return DEFAULT
-    }
+    /** Speech output cannot switch language based on an untrusted label. */
+    fun reconcile(text: String, claimed: String?): String = APP_DEFAULT
 }
 
-/**
- * A piece of text together with the language it is actually written in.
- *
- * Language detection used to be propagated to TTS while the *text* stayed
- * English, so a Hindi speaker heard English words requested as `hi-IN`. Pairing
- * the two makes that mismatch unrepresentable: whatever produced the string —
- * the task DSL, the planner, or a UI phrase — says which language it wrote.
- */
+/** Text paired with the only language the MVP is allowed to present. */
 data class Spoken(val text: String, val language: String = Language.DEFAULT)

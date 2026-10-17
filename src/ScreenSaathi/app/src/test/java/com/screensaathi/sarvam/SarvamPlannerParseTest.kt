@@ -22,7 +22,7 @@ class SarvamPlannerParseTest {
             TaskStep(
                 id = "amount", resourceId = "amount_field",
                 instruction = "Enter the bill amount in this box.",
-                instructions = mapOf("hi-IN" to "इस बॉक्स में बिल की रकम भरिए।"),
+                instructions = mapOf("ru-RU" to "Введите сумму счёта в это поле."),
             ),
             TaskStep(id = "submit", resourceId = "submit_button", instruction = "Tap to pay."),
         ),
@@ -34,7 +34,7 @@ class SarvamPlannerParseTest {
         }}}]}}]}"""
 
     @Test
-    fun `a well-formed Hindi plan is parsed whole`() {
+    fun `foreign legacy planner wording falls back to Russian DSL wording`() {
         val plan = SarvamPlanner.parse(
             response(
                 """{"intent":"pay_bill","step":"amount",
@@ -49,15 +49,14 @@ class SarvamPlannerParseTest {
         assertEquals("amount", plan.step)
         assertEquals("amount_field", plan.targetResourceId)
         assertEquals(4, plan.targetIndex)
-        assertEquals("hi-IN", plan.language)
+        assertEquals("ru-RU", plan.language)
+        assertEquals("Введите сумму счёта в это поле.", plan.instruction)
         assertEquals(0.97, plan.confidence, 0.001)
-        assertEquals("hi-IN", plan.spoken.language)
+        assertEquals("ru-RU", plan.spoken.language)
     }
 
     @Test
-    fun `a mislabelled language is corrected to the script actually written`() {
-        // The model answered in English but claimed the user's Hindi. Trusting
-        // the claim would 400 at Bulbul and the app would go mute.
+    fun `English legacy planner wording is replaced by Russian DSL wording`() {
         val plan = SarvamPlanner.parse(
             response(
                 """{"intent":"pay_bill","step":"amount",
@@ -67,11 +66,12 @@ class SarvamPlannerParseTest {
             ),
             task, "hi-IN",
         )
-        assertEquals("en-IN", plan!!.language)
+        assertEquals("ru-RU", plan!!.language)
+        assertEquals("Введите сумму счёта в это поле.", plan.instruction)
     }
 
     @Test
-    fun `a missing language falls back to the language the user spoke`() {
+    fun `a missing language cannot make the surface non Russian`() {
         val plan = SarvamPlanner.parse(
             response(
                 """{"intent":"pay_bill","step":"amount",
@@ -80,11 +80,12 @@ class SarvamPlannerParseTest {
             ),
             task, "hi-IN",
         )
-        assertEquals("hi-IN", plan!!.language)
+        assertEquals("ru-RU", plan!!.language)
+        assertEquals("Введите сумму счёта в это поле.", plan.instruction)
     }
 
     @Test
-    fun `an empty instruction falls back to the DSL wording in the user's language`() {
+    fun `an empty instruction falls back to Russian DSL wording`() {
         val plan = SarvamPlanner.parse(
             response(
                 """{"intent":"pay_bill","step":"amount",
@@ -93,8 +94,8 @@ class SarvamPlannerParseTest {
             ),
             task, "hi-IN",
         )
-        assertEquals("इस बॉक्स में बिल की रकम भरिए।", plan!!.instruction)
-        assertEquals("hi-IN", plan.language)
+        assertEquals("Введите сумму счёта в это поле.", plan!!.instruction)
+        assertEquals("ru-RU", plan.language)
     }
 
     @Test
@@ -154,6 +155,51 @@ class SarvamPlannerParseTest {
         )
 
         assertFailure(PlannerFailureKind.INVALID_RESPONSE, outcome)
+    }
+
+    @Test
+    fun `foreign user visible guidance is rejected even when labelled Russian`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":false,"action_type":"guide",
+                    "target":{"resource_id":"profile","text":"Профиль"},
+                    "instruction":"Tap Profile.","language":"ru-RU",
+                    "confidence":0.9,"reason":"target visible"}"""
+            ),
+            "Найти профиль",
+        )
+
+        assertFailure(PlannerFailureKind.INVALID_RESPONSE, outcome)
+    }
+
+    @Test
+    fun `mixed English prose around a Russian target is rejected`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":false,"action_type":"guide",
+                    "target":{"resource_id":"settings","text":"Настройки"},
+                    "instruction":"Click «Настройки» to continue","language":"ru-RU",
+                    "confidence":0.9,"reason":"next visible control"}""",
+            ),
+            "Открыть настройки",
+        )
+
+        assertFailure(PlannerFailureKind.INVALID_RESPONSE, outcome)
+    }
+
+    @Test
+    fun `Russian prose may contain the grounded Latin target label`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":false,"action_type":"guide",
+                    "target":{"resource_id":"app","text":"Yandex Go"},
+                    "instruction":"Нажмите Yandex Go.","language":"ru-RU",
+                    "confidence":0.9,"reason":"next visible control"}""",
+            ),
+            "Заказать такси",
+        )
+
+        assertTrue(outcome is PlannerOutcome.Success)
     }
 
     @Test

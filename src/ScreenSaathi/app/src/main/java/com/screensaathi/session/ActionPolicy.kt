@@ -29,6 +29,17 @@ package com.screensaathi.session
  */
 object ActionPolicy {
 
+    /** Stable internal attribution; never rendered as user-facing prose. */
+    enum class ReasonCode {
+        EMPTY_LABEL,
+        BLOCKED_SECURITY,
+        HIGH_RISK,
+        CONFIRMATION_REQUIRED,
+        UNKNOWN_EXECUTION,
+        SAFE_GUIDANCE,
+        SAFE_READ,
+    }
+
     /**
      * Ordered least to most restrictive. [BLOCKED_ACTION] is never performed
      * and never confirmable — a confirmation dialog for something that should
@@ -57,8 +68,10 @@ object ActionPolicy {
 
     data class Ruling(
         val level: Level,
-        /** Shown to the user when confirming, and logged for every decision. */
-        val reason: String,
+        /** Stable value for logs and eval attribution. */
+        val reasonCode: ReasonCode,
+        /** Russian copy shown to the user; never use [reasonCode] as UI text. */
+        val userMessage: String,
         /** The matched policy term, for eval reporting. Empty when none. */
         val trigger: String = "",
     ) {
@@ -66,6 +79,9 @@ object ActionPolicy {
             get() = level == Level.USER_CONFIRMATION_REQUIRED || level == Level.HIGH_RISK_ACTION
 
         val isPermitted: Boolean get() = level != Level.BLOCKED_ACTION
+
+        /** Compatibility for internal diagnostics; not user-facing. */
+        val reason: String get() = reasonCode.name
     }
 
     /**
@@ -129,14 +145,19 @@ object ActionPolicy {
     fun evaluate(elementLabel: String, isExecuting: Boolean = false): Ruling {
         val label = elementLabel.lowercase().trim()
         if (label.isEmpty()) {
-            return Ruling(Level.SAFE_GUIDE, "no label to assess; pointing only")
+            return Ruling(
+                Level.SAFE_GUIDE,
+                ReasonCode.EMPTY_LABEL,
+                "У элемента нет подписи. Можно только показать его, а действие выполните вы.",
+            )
         }
 
         BLOCKED.firstOrNull { label.contains(it) }?.let {
             return Ruling(
                 Level.BLOCKED_ACTION,
-                "\"$elementLabel\" touches device security, permissions or recovery credentials — " +
-                    "ScreenSaathi does not guide these",
+                ReasonCode.BLOCKED_SECURITY,
+                "«$elementLabel» относится к безопасности устройства или разрешениям. " +
+                    "ОПОРА не помогает выполнять такие действия.",
                 it,
             )
         }
@@ -144,7 +165,8 @@ object ActionPolicy {
         HIGH_RISK.firstOrNull { label.contains(it) }?.let {
             return Ruling(
                 Level.HIGH_RISK_ACTION,
-                "\"$elementLabel\" looks irreversible — confirm before continuing",
+                ReasonCode.HIGH_RISK,
+                "Действие «$elementLabel» может быть необратимым. Перед продолжением подтвердите его самостоятельно.",
                 it,
             )
         }
@@ -152,7 +174,8 @@ object ActionPolicy {
         CONFIRM.firstOrNull { label.contains(it) }?.let {
             return Ruling(
                 Level.USER_CONFIRMATION_REQUIRED,
-                "\"$elementLabel\" is consequential — confirm before continuing",
+                ReasonCode.CONFIRMATION_REQUIRED,
+                "Действие «$elementLabel» может изменить данные. Перед продолжением подтвердите его самостоятельно.",
                 it,
             )
         }
@@ -163,13 +186,22 @@ object ActionPolicy {
         return if (isExecuting) {
             Ruling(
                 Level.USER_CONFIRMATION_REQUIRED,
-                "unrecognised action and ScreenSaathi would be tapping it, not the user",
+                ReasonCode.UNKNOWN_EXECUTION,
+                "Действие не распознано. Подтвердите его самостоятельно перед продолжением.",
             )
         } else {
-            Ruling(Level.SAFE_GUIDE, "pointing at \"$elementLabel\"; the user taps it")
+            Ruling(
+                Level.SAFE_GUIDE,
+                ReasonCode.SAFE_GUIDANCE,
+                "Показываю элемент «$elementLabel». Нажмите его самостоятельно.",
+            )
         }
     }
 
     /** Reading a selection aloud changes nothing and is always allowed. */
-    fun evaluateRead(): Ruling = Ruling(Level.SAFE_READ, "reading on-screen content aloud")
+    fun evaluateRead(): Ruling = Ruling(
+        Level.SAFE_READ,
+        ReasonCode.SAFE_READ,
+        "Читаю выбранный текст с экрана.",
+    )
 }

@@ -121,6 +121,17 @@ class ActionPolicyTest {
         val ruling = ActionPolicy.evaluate("Confirm payment")
 
         assertTrue(ruling.trigger.isNotEmpty())
-        assertTrue(ruling.reason.contains("Confirm payment"))
+        assertEquals(ActionPolicy.ReasonCode.HIGH_RISK, ruling.reasonCode)
+    }
+
+    @Test
+    fun `blocked and confirmation messages shown to the user are Russian`() {
+        val blocked = ActionPolicy.evaluate("Разрешить доступ")
+        val confirmation = ActionPolicy.evaluate("Заказать")
+
+        assertTrue(blocked.userMessage.contains("не помогает"))
+        assertTrue(confirmation.userMessage.contains("подтвердите"))
+        assertTrue(com.screensaathi.sarvam.Language.isRussianText(blocked.userMessage))
+        assertTrue(com.screensaathi.sarvam.Language.isRussianText(confirmation.userMessage))
     }
 }

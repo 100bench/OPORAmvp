@@ -1,22 +1,22 @@
 # Architecture
 
 ```
-Voice / Input
+Voice / Text input + raw Accessibility snapshot
       │
       ▼
-Intent Understanding  (gpt-transcribe → gpt-6-luna planner)
+Local Screen Safety  (bank/auth/payment/final-action boundary)
       │
       ▼
-Session Controller  (turns, generations, screen-change invalidation)
+Sanitization  (semantic planner projection, no geometry/current field values)
       │
       ▼
-Screen Perception  (ScreenReaderService → ScreenSnapshot)
+Intent Understanding  (gpt-transcribe for allowed voice → gpt-6-luna planner)
       │
       ▼
-Target Resolution  (TargetResolver — ranked, app-agnostic)
+Session Controller  (turns, capture generations, screen-change invalidation)
       │
       ▼
-Safety / Action Policy  (SafetyGuard)
+Target Resolution + Action Policy  (same raw tree, ranked, app-agnostic)
       │
       ▼
 Android Interaction  (user taps; we never tap for them)
@@ -25,7 +25,7 @@ Android Interaction  (user taps; we never tap for them)
 Visual Guidance  (HighlightView, VoiceWaveformView, OverlayService)
       │
       ▼
-Screen Re-perception  (loop back to Screen Perception)
+Screen Re-perception  (loop back to Local Screen Safety)
 ```
 
 ## Subsystems
@@ -55,11 +55,11 @@ the screen's content signature diverges — not gated on the new screen
 settling, because gating both was measured to hold a stale ring on screen for
 ~1.5s after a tap.
 
-### Safety — `session/SafetyGuard.kt`
-Validates launches and open-ended plans before they reach the device: refuses
-to open an app the user didn't name, and refuses a "confident" plan that
-isn't grounded in what the screen actually shows. This is the one place where
-the assistant is allowed to say no.
+### Safety — `session/ScreenSafetyGate.kt`, `session/SafetyGuard.kt`
+The raw UI tree is classified locally before sanitization or any planner call.
+Authentication, banking, payment-data and final-confirmation surfaces clear
+the highlight and pause or hand control back to the user. Plans are also
+rejected unless grounded in the exact readable tree used for that request.
 
 ### Visual guidance — `overlay/HighlightView.kt`, `overlay/VoiceWaveformView.kt`, `OverlayService.kt`
 `HighlightView` is a `NOT_TOUCHABLE` full-screen layer; the cursor flies to a
@@ -75,15 +75,13 @@ snap/keyboard-avoidance math, and `overlay/AssistantUiState.kt` is the single
 state-machine enum that replaced a set of independent booleans which used to
 be able to contradict each other.
 
-### Voice — `sarvam/`
-The package and `Sarvam*` class names are retained as legacy names to keep the
-migration small. They call OpenAI through a localhost development gateway:
-`SarvamStt.kt` (`gpt-transcribe`),
-`SarvamPlanner.kt` (`gpt-6-luna`, forced tool call), `SarvamTts.kt`
-(`gpt-4o-mini-tts`), and `WavRecorder.kt` (16kHz mono PCM capture + RMS). The
-gateway owns the API key; no secret is present in the APK. If a call fails,
-`StepEngine` (deterministic, no network)
-completes the task anyway — every network step has a scripted fallback.
+### Voice and planning
+The voice path uses OpenAI `gpt-transcribe`, the guidance path uses a strict
+structured `gpt-6-luna` response, and spoken output uses
+`gpt-4o-mini-tts`. A localhost development gateway owns the API key; no secret
+is present in the APK. The user-facing contract is Russian-only. If a network
+call fails, the session pauses with bounded local recovery rather than issuing
+an ungrounded instruction.
 
 ### Device inventory — `device/DeviceContext.kt`, `device/DeviceContextProvider.kt`
 Real `PackageManager` discovery (`QUERY_ALL_PACKAGES`), not a curated app
@@ -98,10 +96,10 @@ as their default home app. Lists real installed apps from
 
 ## What is explicitly NOT here
 
-- No AI-provider abstraction — Sarvam is called directly, not behind an
-  interface. See `docs/DECISIONS.md`.
 - No MediaProjection/screenshot fallback — perception is accessibility-only.
   Where an app exposes too little to accessibility, the resolver says so
   rather than guessing from a screenshot.
-- No persistent cross-session memory. `lastUserRequest`, `chosenPackage` etc.
-  live for the current session only.
+- No full transcript log or UI-tree persistence. Resume stores only a minimal
+  encrypted capsule (active goal, package, safe step text and timestamps). A
+  voice goal is necessarily the recognized text of that current request. On
+  resume, live safety and target resolution run again before anything is shown.

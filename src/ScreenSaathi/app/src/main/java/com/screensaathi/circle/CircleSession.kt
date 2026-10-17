@@ -1,29 +1,22 @@
 package com.screensaathi.circle
 
-import android.graphics.Bitmap
 import android.util.Log
-import com.screensaathi.ScreenReaderService
-import java.io.File
-import java.io.FileOutputStream
+import com.screensaathi.screen.ScreenSnapshot
 
 /**
- * Drives one circle interaction: capture, resolve, remember.
+ * Holds one circle interaction and resolves it exclusively from the live
+ * accessibility UI tree.
  *
- * Deliberately separate from [CircleSelectionView] (which only draws and
- * reports a path) and from the overlay service (which only owns windows), so
- * the decision-making here can be reasoned about on its own. It holds the
- * live [CircleContext] so a follow-up question resolves against the same
- * selection.
- *
- * This class does not talk to the planner, speak, or highlight — the caller
- * routes an agentic intent into the existing SessionController rather than a
- * second agent loop being grown here.
+ * [capture] and [vision] remain constructor-only compatibility seams so tests
+ * can prove even an available pixel provider is unreachable in the MVP. They
+ * are deliberately not retained: after construction there is no runtime path
+ * from this session to screenshot capture or a vision request.
  */
+@Suppress("UNUSED_PARAMETER")
 class CircleSession(
-    private val capture: ScreenCaptureProvider,
-    private val vision: VisionProvider = NoOpVisionProvider,
-    private val readerProvider: () -> ScreenReaderService? = { ScreenReaderService.instance },
-    private val cacheDirProvider: () -> File?,
+    capture: ScreenCaptureProvider = UnavailableScreenCaptureProvider,
+    vision: VisionProvider = NoOpVisionProvider,
+    private val snapshotProvider: () -> ScreenSnapshot?,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -32,28 +25,9 @@ class CircleSession(
         private set
 
     /**
-     * Bumped on every new selection. A capture that lands after the user has
-     * already drawn something else must not overwrite the newer context —
-     * the same generation discipline the voice path uses for in-flight plans.
-     */
-    @Volatile
-    private var generation = 0
-
-    /**
-     * Per instance rather than per process: [CircleSession] is constructed
-     * once (lazily, by SessionController), so this is equivalent in
-     * production, and a static would make test outcomes depend on which test
-     * happened to run first.
-     */
-    private val prunedOrphans = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    /**
-     * Resolve a completed selection.
-     *
-     * The accessibility snapshot is taken *first* and synchronously, before
-     * the screenshot: it is the primary signal, it is cheap, and taking it
-     * after an async capture would resolve against a screen that may already
-     * have changed. Pixels are then attached when (and if) they arrive.
+     * Resolve a completed selection synchronously against the current UI tree.
+     * A missing tree is a normal unavailable result; pixels are never used as
+     * a fallback.
      */
     fun onSelectionDrawn(
         path: List<SelectionPoint>,
@@ -61,17 +35,7 @@ class CircleSession(
         languageCode: String,
         onResolved: (CircleContext) -> Unit,
     ) {
-        val myGeneration = ++generation
-
-        // Release the outgoing selection before replacing it. Without this,
-        // every selection leaks its crop file and its full-screen bitmap
-        // (~10MB) — measured on device: ten consecutive selections left
-        // seventeen PNGs in cacheDir and nothing ever reclaimed them.
-        releaseContext(context)
-        pruneOrphanedCropsOnce()
-
-        val reader = readerProvider()
-        val snapshot = reader?.snapshot()
+        val snapshot = snapshotProvider()
         if (snapshot == null) {
             Log.w(TAG, "no accessibility snapshot; selection cannot be resolved")
         }
@@ -83,53 +47,22 @@ class CircleSession(
             screenSignature = snapshot?.signature().orEmpty(),
             capturedAtMs = clock(),
         )
-
         val target = if (snapshot != null) {
             SelectionResolver.resolve(selection, snapshot)
         } else {
             EMPTY_TARGET
         }
 
-        val initial = CircleContext(
+        val resolved = CircleContext(
             selection = selection,
             target = target,
             frame = null,
             languageCode = languageCode,
         )
-        context = initial
-        onResolved(initial)
-
-        // Pixels are optional and always second. They exist so a vision
-        // provider can be added later; nothing in the current flow blocks on
-        // them, and a failure here degrades to accessibility-only rather than
-        // failing the interaction.
-        if (!capture.isAvailable) return
-
-        capture.captureCurrentScreen { result ->
-            if (myGeneration != generation) {
-                result.getOrNull()?.bitmap?.recycle()
-                return@captureCurrentScreen
-            }
-
-            val frame = result.getOrNull()
-            if (frame == null) {
-                Log.i(TAG, "capture unavailable: ${result.exceptionOrNull()?.message}")
-                return@captureCurrentScreen
-            }
-
-            val cropPath = writeCrop(frame.bitmap, selection)
-            val withPixels = (context ?: initial).copy(
-                selection = selection.copy(cropPath = cropPath),
-                frame = frame,
-            )
-            if (myGeneration == generation) {
-                context = withPixels
-                onResolved(withPixels)
-            }
-        }
+        context = resolved
+        onResolved(resolved)
     }
 
-    /** Record a turn against the live selection. */
     fun addTurn(request: String, intent: CircleIntent, response: String) {
         context = context?.withTurn(request, intent, response, clock())
     }
@@ -139,98 +72,20 @@ class CircleSession(
     }
 
     /**
-     * Ask the vision provider about the selection.
-     *
-     * Only meaningful when the accessibility tree could not explain it. With
-     * [NoOpVisionProvider] this always reports unavailable — which the caller
-     * turns into an honest sentence rather than a guess.
+     * Visual understanding is outside the tree-only MVP. Keep the old method
+     * as an honest local result for callers compiled against the earlier API;
+     * it cannot reach [vision].
      */
     fun analyzeVisually(userPrompt: String, onResult: (VisionResult) -> Unit) {
-        val ctx = context
-        val frame = ctx?.frame
-        if (ctx == null || frame == null) {
-            onResult(VisionResult.Unavailable(VisionResult.Unavailable.Reason.NO_PIXELS))
-            return
-        }
-        vision.analyzeSelection(frame, ctx.selection, userPrompt, onResult)
+        onResult(VisionResult.Unavailable(VisionResult.Unavailable.Reason.NO_PIXELS))
     }
 
-    /**
-     * Drop the selection.
-     *
-     * Also recycles the captured bitmap: a full-screen ARGB_8888 frame is
-     * ~10MB on this device, and holding several across repeated interactions
-     * is the obvious way to leak.
-     */
     fun clear() {
-        generation++
-        releaseContext(context)
         context = null
-    }
-
-    /**
-     * Free everything a context owns off-heap: the captured frame's bitmap and
-     * the cropped PNG on disk. Safe to call with null or with a context whose
-     * bitmap was already recycled.
-     */
-    /**
-     * Delete crops stranded by a previous process.
-     *
-     * [releaseContext] handles the normal path, but a kill mid-selection
-     * leaves the file behind with no owner to clean it up. Runs once per
-     * process, on first selection rather than at construction so it never
-     * touches disk for a user who does not use circle mode.
-     */
-    private fun pruneOrphanedCropsOnce() {
-        if (!prunedOrphans.compareAndSet(false, true)) return
-        val dir = cacheDirProvider() ?: return
-        runCatching {
-            dir.listFiles { f -> f.name.startsWith(CROP_PREFIX) }
-                ?.forEach { it.delete() }
-        }
-    }
-
-    private fun releaseContext(ctx: CircleContext?) {
-        if (ctx == null) return
-        ctx.frame?.bitmap?.let { if (!it.isRecycled) it.recycle() }
-        ctx.selection.cropPath?.let { runCatching { File(it).delete() } }
-    }
-
-    /**
-     * Crop the selection out of the frame and cache it.
-     *
-     * Written to cacheDir and deleted in [clear], matching how the voice path
-     * treats recorded audio — nothing about the user's screen persists beyond
-     * the interaction that needed it.
-     */
-    private fun writeCrop(bitmap: Bitmap?, selection: ScreenSelection): String? {
-        if (bitmap == null) return null
-        val dir = cacheDirProvider() ?: return null
-
-        return try {
-            val box = selection.bounds
-            val left = box.left.coerceIn(0, bitmap.width)
-            val top = box.top.coerceIn(0, bitmap.height)
-            val right = box.right.coerceIn(left, bitmap.width)
-            val bottom = box.bottom.coerceIn(top, bitmap.height)
-            if (right - left <= 0 || bottom - top <= 0) return null
-
-            val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-            val file = File(dir, "$CROP_PREFIX${selection.capturedAtMs}.png")
-            FileOutputStream(file).use { out ->
-                crop.compress(Bitmap.CompressFormat.PNG, 90, out)
-            }
-            if (crop !== bitmap) crop.recycle()
-            file.absolutePath
-        } catch (e: Exception) {
-            Log.w(TAG, "could not write selection crop", e)
-            null
-        }
     }
 
     companion object {
         private const val TAG = "CircleSession"
-        private const val CROP_PREFIX = "circle_selection_"
 
         private val EMPTY_TARGET = SelectionResolver.SelectedTarget(
             element = null,

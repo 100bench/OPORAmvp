@@ -25,9 +25,9 @@ enum class StepKind { GUIDE, CHOOSE_APP }
 data class TaskStep(
     val id: String,
     val resourceId: String,
-    /** Base wording, authored in [Language.DEFAULT]. Always present. */
+    /** Legacy base wording. Russian assets should also provide `ru-RU`. */
     val instruction: String,
-    /** Optional per-language wording, keyed by full code ("hi-IN"). */
+    /** MVP wording keyed by the full Russian code (`ru-RU`). */
     val instructions: Map<String, String> = emptyMap(),
     val expectsValue: Boolean = false,
     val highlight: Highlight = Highlight(),
@@ -60,18 +60,15 @@ data class TaskStep(
     val irreversible: Boolean = false,
 ) {
     /**
-     * The step's wording in [language] if the DSL carries it, otherwise the
-     * base English text labelled as English.
-     *
-     * Returning a [Spoken] rather than a bare String is the point: the offline
-     * path used to hand English DSL text to Bulbul tagged with the user's
-     * detected language, which Bulbul rejects outright. The caller can no
-     * longer lose track of which language the words are in.
+     * Always returns Russian. A legacy task without Russian wording gets a
+     * neutral local phrase instead of leaking foreign text into the UI.
      */
     fun spokenFor(language: String): Spoken {
-        val code = Language.normalize(language)
-        instructions[code]?.let { return Spoken(it, code) }
-        return Spoken(instruction, Language.DEFAULT)
+        instructions[Language.APP_DEFAULT]?.let { return Spoken(it, Language.APP_DEFAULT) }
+        if (Language.isRussianText(instruction)) {
+            return Spoken(instruction, Language.APP_DEFAULT)
+        }
+        return Spoken("Следуйте подсказке на экране.", Language.APP_DEFAULT)
     }
 }
 

@@ -29,11 +29,9 @@ import kotlin.math.hypot
  * That is what makes the gesture legible as "you are choosing this part of
  * *this* screen" rather than "you are drawing on a grey rectangle".
  *
- * Written natively for ScreenSaathi. The reference implementation studied for
- * this feature (AKS-Labs/CircleToSearch) is GPL-3.0 and MIT-licensed
- * ScreenSaathi cannot take code from it; only the platform-level mechanism
- * (that an AccessibilityService can screenshot without MediaProjection) was
- * reused, which is a fact about Android, not an expression.
+ * This view draws only its own translucent overlay and the user's local path.
+ * It never captures or reads the pixels underneath it; semantic resolution is
+ * performed later from the Accessibility UI tree.
  */
 class CircleSelectionView(
     context: Context,

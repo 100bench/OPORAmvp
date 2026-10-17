@@ -36,7 +36,7 @@ is expected, not a failure.
 ## Universal guidance loop
 
 Text and voice goals enter the same `UniversalGuidanceLoop`; text skips only
-STT. The loop is app-agnostic and sends the planner one sanitized UI-tree
+STT. The user-facing MVP is Russian-only. The loop is app-agnostic and sends the planner one sanitized UI-tree
 snapshot at a time. Its required order is:
 
 1. capture the raw accessibility snapshot locally;
@@ -63,6 +63,16 @@ Focused regression command:
   --tests 'com.screensaathi.session.UniversalGuidanceLoopTest' \
   --tests 'com.screensaathi.session.*' \
   --tests 'com.screensaathi.evals.LatencyProfileTest'
+```
+
+The no-screenshot/Russian/banking boundary has its own focused suite:
+
+```bash
+./gradlew testDebugUnitTest \
+  --tests 'com.screensaathi.circle.CircleSessionTest' \
+  --tests 'com.screensaathi.session.BankSafetyIntegrationTest' \
+  --tests 'com.screensaathi.session.PhrasesTest' \
+  --tests 'com.screensaathi.sarvam.LanguageTest'
 ```
 
 ## Install and run on a device
@@ -137,6 +147,11 @@ Checked 2026-10-17 with APK commit `b49d85a` on serial `RF8MA183F5A`:
   SHA-256 `28f0b910998eabe69e11c7016388a65d1533b912a65f63689e3e7a2123452286`.
   `adb reverse tcp:8787 tcp:8787` was active and `ScreenReaderService` remained
   enabled and bound after the in-place update.
+- The Task 10 tree-only build, SHA-256
+  `240fd091097f4674ea292f2cf7db461628eac39435e832ea8cf6508f6e52103d`,
+  was then installed in place. USB reverse remained active. Android reported
+  accessibility `capabilities=1` (window-content retrieval only), confirming
+  the installed service no longer requests screenshot capability.
 
 The device previously had an APK signed with a different key. It required a
 one-time uninstall before this debug build could be installed, so the old
@@ -154,8 +169,8 @@ adb logcat -s TargetResolver:*
 # Session/turn/highlight state
 adb logcat -s SessionController:*
 
-# OpenAI planner/STT/TTS transport errors
-adb logcat -s SarvamPlanner:* SarvamStt:* SarvamTts:*
+# OpenAI planner/STT/TTS transport errors from this process
+adb logcat -d --pid=$(adb shell pidof com.screensaathi | tr -d '\r') | grep -E "Planner|Stt|Tts|OpenAI"
 
 # Confirm exactly 2 overlay windows (highlight layer + pill) — more means a
 # duplicate registration, fewer means the service isn't running

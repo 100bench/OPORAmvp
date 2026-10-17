@@ -1,6 +1,6 @@
-# ScreenSaathi
+# Опора
 
-### An open-source AI copilot that sees your Android screen and shows you exactly where to tap
+### Android-проводник, который читает UI-дерево и показывает, куда нажать
 
 ![ScreenSaathi resolves and rings Uber's real "Where to?" field, live on device](docs/assets/hero.png)
 
@@ -15,8 +15,8 @@ Most voice assistants answer questions or launch apps. ScreenSaathi reads the
 or field you need — not a hardcoded coordinate — and draws a ring around it.
 Then it waits for **you** to tap it. It never acts on your behalf.
 
-Built for people who find modern app interfaces hard to navigate: it listens
-in Hindi, Tamil or English, and answers back in whichever one you spoke.
+The current MVP has one deliberately narrow user-facing language: Russian.
+Both typed and spoken goals are answered in Russian.
 
 ## 🚀 Try it now
 
@@ -36,7 +36,8 @@ Building from source instead? See [Build](#build) below.
 
 ## What it looks like
 
-Real on-device screenshots, captured this session — not mockups, not renders.
+The images below document the overlay UI. They are not inputs to the assistant:
+the runtime neither captures nor sends screenshots.
 
 | | |
 |---|---|
@@ -44,20 +45,6 @@ Real on-device screenshots, captured this session — not mockups, not renders.
 | Idle — waiting for a request | Listening — the waveform is real mic amplitude, not decorative |
 | ![Ring precisely on Uber's real Where to field, with the spoken instruction shown live](docs/assets/target-highlighting.png) | ![Assistant repositioned above the open keyboard, clear of it](docs/assets/keyboard-aware.png) |
 | Screen understanding + target highlighting — the ring sits on Uber's actual `Where to?` element, resolved from the live accessibility tree, not a hardcoded coordinate | Keyboard-aware — the overlay detects the IME and moves itself clear automatically |
-
-<details>
-<summary>Older captures: cursor animation and multilingual app choice (pre-dates the current overlay/target-resolution code — kept for history)</summary>
-
-| | |
-|---|---|
-| ![The cursor lands on a field and the ring blooms around it](docs/screenshots/cursor-and-ring.png) | ![The cursor travels to the next field, tether visible](docs/screenshots/cursor-travels-to-next-field.png) |
-| Cursor arrives, ring blooms, instruction spoken | It *travels* between fields |
-| ![The assistant asks which ride app to use, in Hindi, with the real installed apps listed](docs/screenshots/hindi-app-choice.png) | ![The same question, rendered in Tamil](docs/screenshots/tamil-instruction.png) |
-| Detected Hindi → asked in Hindi → real installed apps | Same flow, detected Tamil → asked in Tamil |
-
-</details>
-
-**Not shown, and not faked:** a "thinking" state screenshot (too transient — under a second between listening and the next state — to capture meaningfully as a static image) and a movable/drag-in-progress capture (inherently a motion, not a moment). Both behaviors are real and covered by `docs/DEMO.md` and `docs/DECISIONS.md`; they just don't reduce to an honest screenshot.
 
 ## How it works
 
@@ -77,15 +64,20 @@ before you assume more than what's demonstrated above.
 
 ```mermaid
 flowchart TD
-    U([User speaks]) --> STT[gpt-transcribe<br/>transcript + language]
+    U([Russian text or voice]) --> SAFE[Local raw-tree safety gate]
+    R[ScreenReaderService<br/>read-only accessibility snapshot] --> SAFE
+    SAFE -->|bank / auth / payment| HANDOFF[Local safe handoff]
+    SAFE -->|allowed voice| STT[gpt-transcribe<br/>transcript]
     STT --> P[gpt-6-luna planner<br/>forced tool call]
-    R[ScreenReaderService<br/>read-only accessibility snapshot] --> P
-    P -->|step + target + instruction<br/>+ language, all in the user's script| SC[SessionController]
+    SAFE -->|allowed text| P
+    SAFE --> SAN[Sanitized semantic projection<br/>no geometry]
+    SAN --> P
+    P -->|one safe step or answer<br/>in Russian| SC[SessionController]
     SC --> OV[OverlayService]
     OV --> HL[HighlightView<br/>cursor flies to target, ring blooms]
     SC --> TTS[gpt-4o-mini-tts<br/>speaks the instruction back]
-    P -.network fails / low confidence.-> SE[StepEngine<br/>deterministic fallback, no network]
-    SE --> SC
+    P -.network fails / invalid response.-> PAUSE[Bounded local recovery<br/>or pause]
+    PAUSE --> SC
 ```
 
 Five pieces, and only five — this is a deliberate freeze, not an oversight:
@@ -94,14 +86,15 @@ Five pieces, and only five — this is a deliberate freeze, not an oversight:
 | --- | --- | --- |
 | Overlay pill | `OverlayService.kt`, `overlay/HighlightView.kt` | Renders an `OverlayCommand`. Never reasons. |
 | Screen reader | `ScreenReaderService.kt`, `screen/ScreenSnapshot.kt` | Read-only accessibility snapshot. No gestures. |
-| OpenAI STT | `sarvam/SarvamStt.kt`, `sarvam/WavRecorder.kt` | `gpt-transcribe`: 16 kHz mono WAV → transcript + language. |
-| OpenAI planner | `sarvam/SarvamPlanner.kt` | `gpt-6-luna`: forced tool call → the frozen planner contract. |
-| OpenAI TTS | `sarvam/SarvamTts.kt`, `sarvam/AudioPlayer.kt` | `gpt-4o-mini-tts`: instruction → WAV audio (`marin`). |
+| OpenAI STT | voice transport + recorder | `gpt-transcribe`: 16 kHz mono WAV → transcript. |
+| OpenAI planner | guidance planner | `gpt-6-luna`: strict structured response → one safe step or answer. |
+| OpenAI TTS | speech transport + player | `gpt-4o-mini-tts`: Russian instruction → WAV audio (`marin`). |
 
-`session/SessionController.kt` orchestrates them. `session/StepEngine.kt` is the
-deterministic core that completes the task with **no network at all** — every
-one of the four network calls above can fail and the app still finishes the
-task in scripted order.
+`session/SessionController.kt` orchestrates them. If a network call fails or a
+response cannot be grounded, the universal MVP session uses bounded local
+recovery or pauses instead of inventing a step. The legacy `StepEngine` remains
+for old rehearsal paths and tests; it is not the fallback for open-ended MVP
+guidance.
 
 This diagram is the **M1 milestone** shape — frozen at the time, no field ever
 removed from a contract in `contracts/`. Real subsystems added since (target
@@ -150,12 +143,11 @@ JSON file here, not writing code.
 1. Launch the app, grant **display over other apps**, **microphone**, and
    enable the **ScreenSaathi screen reader** in Accessibility settings.
 2. Tap **Start** — the pill appears at the bottom edge.
-3. Open the demo task screen, or tap one of the **rehearsal buttons**
-   (`Taxi EN` / `टैक्सी HI` / `டாக்ஸி TA`) to drive the taxi flow without
-   speaking — useful when a room is too loud to trust a microphone.
+3. Open the target app. For example, open Yandex Go and ask in Russian to
+   order a taxi; the same generic loop works for any readable UI tree.
 4. Tap the pill to expand, tap the mic, say what you want to do, tap the mic
-   again. The cursor flies to the field; the instruction is spoken back in the
-   language you spoke.
+   again. The cursor flies to the field; the instruction is spoken back in
+   Russian.
 
 Long-press the pill to reveal the debug panel (transcript, intent, step,
 target, latency, confidence, detected language). Keep it hidden during a real
@@ -168,10 +160,12 @@ demo.
 
 ## Data handling
 
-`ScreenReaderService` reads the on-screen content of whatever app is in the
-foreground and sends a text snapshot of it, plus recorded audio and spoken
-instructions, to `api.openai.com`. No screen content, transcript, or audio is
-persisted beyond a temporary `.wav` file deleted immediately after each call.
+`ScreenReaderService` reads the accessible UI tree of the foreground app. The
+phone sends voice, sanitized tree text and spoken instructions to the local Mac
+gateway; the gateway forwards the corresponding requests to OpenAI. Temporary
+WAV files are deleted after use. Full transcript logs and UI trees are not
+persisted, but a short-lived encrypted resume capsule stores the active goal;
+for a voice goal, that field is the recognized request text.
 Full accounting: [`SECURITY.md`](SECURITY.md) and
 [`docs/DATA_HANDLING.md`](docs/DATA_HANDLING.md).
 
@@ -187,15 +181,10 @@ rather than discovered by you later:
   (planner 867–1481 ms against a 700 ms target, TTS 909–1462 ms against
   900 ms) — see `docs/PARKING_LOT.md` for the numbers and why the visual
   cursor lands before speech regardless.
-- **Hindi "skip ahead" phrasing is a known, logged bug** — being fixed in a
-  separate PR alongside this one; see the linked issue if it's still open
-  when you're reading this.
-- **Third-party app guidance (Uber/Ola/Rapido) matches on hardcoded visible
-  text**, not a resource id — it will need updating if those apps change
-  their copy. There is no fallback matching strategy yet.
-- **No session persistence.** Closing the app loses your place; resuming
-  after `Stop` only works within the same process lifetime.
-- **The OpenAI migration needs fresh physical-device multilingual QA.** Unit
+- **Some third-party apps expose little or no useful accessibility tree.**
+  The assistant reports that limitation instead of capturing pixels or
+  guessing from the visible layout.
+- **The OpenAI path needs continued physical-device Russian QA.** Unit
   tests cover the deterministic and parser code, but microphone, accessibility,
   overlay, and spoken output must be checked together on a real Android phone.
 

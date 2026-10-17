@@ -1,57 +1,48 @@
 package com.screensaathi.circle
 
+import com.screensaathi.screen.ScreenSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.File
-import java.nio.file.Files
 
-/**
- * [CircleSession] with the accessibility service absent, which is also the
- * on-device failure case worth being correct about: the selection still
- * resolves to *something* honest rather than throwing.
- *
- * The generation discipline here mirrors the turn invalidation in the voice
- * path (docs/DECISIONS.md) — a slow capture landing after the user has drawn
- * again must not overwrite the newer selection.
- */
+/** Pins the MVP boundary: a circle is resolved from the live UI tree only. */
 class CircleSessionTest {
 
-    /** Holds the callback so the test controls when capture "completes". */
-    private class DeferredCapture(override val isAvailable: Boolean = true) : ScreenCaptureProvider {
-        val pending = mutableListOf<(Result<ScreenFrame>) -> Unit>()
+    private class FailIfCaptured : ScreenCaptureProvider {
+        override val isAvailable: Boolean = true
+        var calls = 0
 
         override fun captureCurrentScreen(onResult: (Result<ScreenFrame>) -> Unit) {
-            pending += onResult
-        }
-
-        fun completeAll(packageName: String = "com.example.app") {
-            val frames = pending.toList()
-            pending.clear()
-            frames.forEach {
-                it(
-                    Result.success(
-                        ScreenFrame(
-                            bitmap = null,
-                            widthPx = 1080,
-                            heightPx = 2392,
-                            capturedAtMs = 0L,
-                            packageName = packageName,
-                            screenSignature = "sig",
-                        )
-                    )
-                )
-            }
+            calls++
+            throw AssertionError("The tree-only MVP must never capture a screenshot")
         }
     }
 
-    private fun session(capture: ScreenCaptureProvider) = CircleSession(
+    private class FailIfVisionCalled : VisionProvider {
+        override val isAvailable: Boolean = true
+        override val displayName: String = "forbidden in MVP"
+        var calls = 0
+
+        override fun analyzeSelection(
+            frame: ScreenFrame,
+            selection: ScreenSelection,
+            userPrompt: String,
+            onResult: (VisionResult) -> Unit,
+        ) {
+            calls++
+            throw AssertionError("The tree-only MVP must never call a vision model")
+        }
+    }
+
+    private val capture = FailIfCaptured()
+    private val vision = FailIfVisionCalled()
+
+    private fun session(snapshot: ScreenSnapshot? = null) = CircleSession(
         capture = capture,
-        vision = NoOpVisionProvider,
-        readerProvider = { null },
-        cacheDirProvider = { null },
+        vision = vision,
+        snapshotProvider = { snapshot },
         clock = { 1_000L },
     )
 
@@ -63,126 +54,88 @@ class CircleSessionTest {
     )
 
     @Test
-    fun `a selection resolves even with no accessibility service`() {
-        val s = session(DeferredCapture(isAvailable = false))
+    fun `selection uses the accessibility snapshot without capturing pixels`() {
+        val snapshot = ScreenSnapshot(
+            packageName = "com.example.app",
+            settled = true,
+            elements = emptyList(),
+        )
+        val s = session(snapshot)
         var resolved: CircleContext? = null
 
-        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "en-IN") { resolved = it }
+        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "ru-RU") { resolved = it }
+
+        assertNotNull(resolved)
+        assertEquals("com.example.app", resolved!!.selection.packageName)
+        assertEquals(snapshot.signature(), resolved!!.selection.screenSignature)
+        assertNull(resolved!!.frame)
+        assertNull(resolved!!.selection.cropPath)
+        assertEquals(0, capture.calls)
+        assertEquals(0, vision.calls)
+    }
+
+    @Test
+    fun `missing accessibility tree reports an honest unavailable target`() {
+        val s = session()
+        var resolved: CircleContext? = null
+
+        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "ru-RU") { resolved = it }
 
         assertNotNull(resolved)
         assertNull(resolved!!.target.element)
         assertTrue(resolved!!.target.reason.contains("accessibility service"))
-        assertEquals("en-IN", resolved!!.languageCode)
+        assertEquals("ru-RU", resolved!!.languageCode)
+        assertEquals(0, capture.calls)
     }
 
     @Test
-    fun `capture is not attempted when the provider is unavailable`() {
-        val capture = DeferredCapture(isAvailable = false)
-        val s = session(capture)
-
-        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "en-IN") {}
-
-        assertTrue(capture.pending.isEmpty())
-    }
-
-    /**
-     * The stale-capture case. Two selections drawn in quick succession; the
-     * first capture completes last and must be discarded.
-     */
-    @Test
-    fun `a late capture from a previous selection does not overwrite the current one`() {
-        val capture = DeferredCapture()
-        val s = session(capture)
-
-        s.onSelectionDrawn(path(offsetY = 0), SelectionShape.FREEFORM, "en-IN") {}
-        val firstSelectionTop = s.context!!.selection.bounds.top
-
-        s.onSelectionDrawn(path(offsetY = 800), SelectionShape.FREEFORM, "en-IN") {}
-        val secondSelectionTop = s.context!!.selection.bounds.top
-
-        // Both captures now land, oldest first.
-        capture.completeAll()
-
-        assertEquals(secondSelectionTop, s.context!!.selection.bounds.top)
-        assertTrue(secondSelectionTop != firstSelectionTop)
-    }
-
-    @Test
-    fun `turns accumulate against the live selection`() {
-        val s = session(DeferredCapture(isAvailable = false))
-        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "en-IN") {}
-
-        s.addTurn("What is this?", CircleIntent.INFORMATION, "A region of the screen.")
-        s.addTurn("Okay, help me use it", CircleIntent.GUIDANCE, "")
-
-        assertEquals(2, s.context!!.turns.size)
-        assertEquals(CircleIntent.GUIDANCE, s.context!!.turns.last().intent)
-    }
-
-    /**
-     * Regression: found on device. Ten consecutive selections left seventeen
-     * crop PNGs in cacheDir — each new selection wrote one without releasing
-     * the previous, so nothing was ever reclaimed until clear() happened to be
-     * called. Verified here via the crop directory rather than the bitmap,
-     * since Bitmap is stubbed in the JVM test runtime.
-     */
-    @Test
-    fun `a new selection deletes the previous selection's crop`() {
-        val dir = Files.createTempDirectory("circle-crops").toFile()
-        try {
-            val stale = File(dir, "circle_selection_1.png").apply { writeText("x") }
-            val s = CircleSession(
-                capture = DeferredCapture(isAvailable = false),
-                vision = NoOpVisionProvider,
-                readerProvider = { null },
-                cacheDirProvider = { dir },
-                clock = { 1_000L },
-            )
-
-            s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "en-IN") {}
-
-            // The orphan prune runs on first selection and clears strays left
-            // behind by a previous process.
-            assertTrue(!stale.exists())
-        } finally {
-            dir.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun `clear drops the context`() {
-        val s = session(DeferredCapture(isAvailable = false))
-        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "en-IN") {}
-        assertNotNull(s.context)
-
-        s.clear()
-
-        assertNull(s.context)
-    }
-
-    @Test
-    fun `vision analysis reports no pixels when capture never produced any`() {
-        val s = session(DeferredCapture(isAvailable = false))
-        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "en-IN") {}
+    fun `visual analysis is locally unavailable and never reaches vision provider`() {
+        val s = session()
+        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "ru-RU") {}
 
         var result: VisionResult? = null
-        s.analyzeVisually("What is this?") { result = it }
+        s.analyzeVisually("Что здесь?") { result = it }
 
         assertEquals(
             VisionResult.Unavailable.Reason.NO_PIXELS,
             (result as VisionResult.Unavailable).reason,
         )
+        assertEquals(0, vision.calls)
     }
 
     @Test
-    fun `active task id is tracked for handoff to the agent loop`() {
-        val s = session(DeferredCapture(isAvailable = false))
-        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "en-IN") {}
+    fun `a newer selection replaces the previous tree context synchronously`() {
+        val s = session(ScreenSnapshot("com.example.app", true, emptyList()))
 
-        s.setActiveTask("pay_bill")
+        s.onSelectionDrawn(path(offsetY = 0), SelectionShape.FREEFORM, "ru-RU") {}
+        val firstTop = s.context!!.selection.bounds.top
+        s.onSelectionDrawn(path(offsetY = 800), SelectionShape.FREEFORM, "ru-RU") {}
+
+        assertTrue(s.context!!.selection.bounds.top != firstTop)
+        assertEquals(0, capture.calls)
+    }
+
+    @Test
+    fun `turns and active task remain attached to the live selection`() {
+        val s = session()
+        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "ru-RU") {}
+
+        s.addTurn("Что это?", CircleIntent.INFORMATION, "Кнопка.")
+        s.setActiveTask("taxi")
+
+        assertEquals(1, s.context!!.turns.size)
         assertTrue(s.context!!.isAgentActive)
+    }
 
-        s.setActiveTask(null)
-        assertTrue(!s.context!!.isAgentActive)
+    @Test
+    fun `clear drops the context without invoking pixel providers`() {
+        val s = session()
+        s.onSelectionDrawn(path(), SelectionShape.FREEFORM, "ru-RU") {}
+
+        s.clear()
+
+        assertNull(s.context)
+        assertEquals(0, capture.calls)
+        assertEquals(0, vision.calls)
     }
 }

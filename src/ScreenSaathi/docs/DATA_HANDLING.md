@@ -28,16 +28,18 @@ wake word, and no background recording. See `sarvam/WavRecorder.kt`.
 
 ## What leaves the device
 
-Three outbound calls, all HTTPS to `api.openai.com`, all defined in
-`sarvam/Sarvam.kt`:
+The Android app sends three kinds of request to the localhost Mac development
+gateway over USB reverse. It does not call OpenAI directly. The gateway then
+forwards those requests to `api.openai.com`:
 
 | Call | What is sent | What comes back |
 | --- | --- | --- |
 | `gpt-transcribe` STT | The recorded `.wav` clip | Transcript + detected language |
-| `gpt-6-luna` planner | The transcript, the current task's step ids, and the current screen snapshot as plain text | A step id, a target resource id, a spoken instruction, and a language code |
+| `gpt-6-luna` planner | The transcript and a sanitized semantic projection of the current UI tree, without coordinates, password/current editable values or screenshot pixels | One structured guidance target and Russian instruction, or one short answer |
 | `gpt-4o-mini-tts` | The instruction text and a voice instruction | Synthesized audio (WAV) |
 
-No third party other than OpenAI ever receives data from this app. There is
+No cloud third party other than OpenAI receives these requests in the current
+development configuration. There is
 no analytics SDK, no crash reporter, no ad SDK, and no telemetry of any kind
 in the dependency list (`gradle/libs.versions.toml`) — this is a design
 decision (see the top-level product rules: "no telemetry"), not an oversight.
@@ -50,10 +52,14 @@ decision (see the top-level product rules: "no telemetry"), not an oversight.
 - The synthesized TTS `.wav` is written to `context.cacheDir` for playback and
   deleted as soon as playback stops or fails (`AudioPlayer.stop()`), the same
   rule the input clip already followed.
-- Nothing is written to persistent storage, a database, or any location
-  outside the app's private cache directory. Nothing survives a
-  `Settings → Apps → Clear cache`.
-- No session, transcript, or screen content persists across app restarts.
+- No separate/full transcript log, audio, UI tree, coordinates, element
+  identifiers or screen image is written to persistent storage.
+- A resumable safe guidance step may store one encrypted capsule in the app's
+  private preferences. It contains only the goal, target package, guidance
+  mode, step number, last safe instruction and timestamps; it expires after
+  30 minutes and is deleted on stop, completion, restart or invalid data.
+  The `goal` is the active user request; when that request came from voice, it
+  is the recognized transcript text. No earlier turns or raw audio are kept.
 
 ## What a user cannot currently do
 

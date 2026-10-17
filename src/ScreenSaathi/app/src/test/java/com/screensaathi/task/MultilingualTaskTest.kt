@@ -8,21 +8,21 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The offline path has to be multilingual too. When the planner is unavailable
- * the DSL wording is all the user gets, so it has to exist in their language —
- * and, when it does not, has to be honest about being English.
- */
-class MultilingualTaskTest {
+/** Legacy task assets cannot escape the Russian-only MVP surface. */
+class RussianTaskTest {
 
     private val json = """
         {
-          "version": 1, "id": "pay_bill", "title": "Pay Electricity Bill",
-          "utterances": ["help me pay this bill", "बिजली का बिल भरना है"],
+          "version": 1, "id": "pay_bill", "title": "Оплата счёта",
+          "utterances": ["помоги оплатить счёт"],
           "steps": [
             { "id": "amount", "resource_id": "amount_field",
               "instruction": "Enter the bill amount in this box.",
-              "instructions": { "hi-IN": "इस बॉक्स में बिल की रकम भरिए।", "fr-FR": "Entrez le montant." } }
+              "instructions": {
+                "ru-RU": "Введите сумму счёта в это поле.",
+                "hi-IN": "इस बॉक्स में बिल की रकम भरिए।",
+                "fr-FR": "Entrez le montant."
+              } }
           ]
         }
     """.trimIndent()
@@ -30,72 +30,55 @@ class MultilingualTaskTest {
     private fun step() = TaskRepository.parse(JSONObject(json)).steps[0]
 
     @Test
-    fun `a translated step is spoken in the user's language`() {
-        val spoken = step().spokenFor("hi-IN")
-        assertEquals("hi-IN", spoken.language)
-        assertEquals("इस बॉक्स में बिल की रकम भरिए।", spoken.text)
+    fun `Russian task wording is used regardless of an incoming language label`() {
+        for (requested in listOf("ru-RU", "en-IN", "hi-IN", "klingon")) {
+            val spoken = step().spokenFor(requested)
+            assertEquals(Language.APP_DEFAULT, spoken.language)
+            assertEquals("Введите сумму счёта в это поле.", spoken.text)
+        }
     }
 
     @Test
-    fun `an untranslated language gets English text labelled English`() {
-        // Not "English text labelled ta-IN" — that combination is a 400 from
-        // Bulbul and the app goes mute.
-        val spoken = step().spokenFor("ta-IN")
-        assertEquals(Language.DEFAULT, spoken.language)
-        assertEquals("Enter the bill amount in this box.", spoken.text)
-    }
-
-    @Test
-    fun `an unspeakable instruction language is dropped at parse time`() {
-        // fr-FR is in the fixture but Bulbul cannot speak it, so it must never
-        // reach synthesis.
+    fun `foreign instruction variants are dropped at parse time`() {
+        assertEquals(setOf("ru-RU"), step().instructions.keys)
+        assertNotNull(step().instructions["ru-RU"])
+        assertNull(step().instructions["hi-IN"])
         assertNull(step().instructions["fr-FR"])
-        assertNotNull(step().instructions["hi-IN"])
     }
 
     @Test
-    fun `a bare tag in the DSL is normalized`() {
-        val j = """
-            { "version": 1, "id": "t", "title": "T", "steps":
-              [ { "id": "a", "resource_id": "a_field", "instruction": "go",
-                  "instructions": { "hi-IN": "चलिए" } } ] }
-        """.trimIndent()
-        val s = TaskRepository.parse(JSONObject(j)).steps[0]
-        assertEquals("चलिए", s.spokenFor("hi").text)
-    }
-
-    @Test
-    fun `steps with no instructions block still work`() {
+    fun `legacy foreign base text without Russian wording degrades locally in Russian`() {
         val j = """
             { "version": 1, "id": "t", "title": "T", "steps":
               [ { "id": "a", "resource_id": "a_field", "instruction": "go" } ] }
         """.trimIndent()
-        val s = TaskRepository.parse(JSONObject(j)).steps[0]
-        assertTrue(s.instructions.isEmpty())
-        assertEquals(Language.DEFAULT, s.spokenFor("hi-IN").language)
-        assertEquals("go", s.spokenFor("hi-IN").text)
-    }
+        val spoken = TaskRepository.parse(JSONObject(j)).steps[0].spokenFor("en-IN")
 
-    // --- utterance matching ---------------------------------------------------
-
-    private fun repo() = TaskRepository.of(listOf(TaskRepository.parse(JSONObject(json))))
-
-    @Test
-    fun `a Devanagari transcript matches a Devanagari utterance`() {
-        // The bug this pins: normalize() used to strip with [^a-z0-9 ], which
-        // deletes every Devanagari character. Saaras returns Hindi speech AS
-        // Devanagari, so the matcher scored zero on the primary demo language
-        // and silently matched nothing at all.
-        assertEquals("pay_bill", repo().matchByUtterance("बिजली का बिल भरना है")?.id)
+        assertEquals(Language.APP_DEFAULT, spoken.language)
+        assertEquals("Следуйте подсказке на экране.", spoken.text)
     }
 
     @Test
-    fun `an English transcript still matches`() {
-        assertEquals("pay_bill", repo().matchByUtterance("help me pay this bill")?.id)
+    fun `Russian base text works without an instructions block`() {
+        val j = """
+            { "version": 1, "id": "t", "title": "T", "steps":
+              [ { "id": "a", "resource_id": "a_field", "instruction": "Нажмите кнопку." } ] }
+        """.trimIndent()
+        val step = TaskRepository.parse(JSONObject(j)).steps[0]
+
+        assertTrue(step.instructions.isEmpty())
+        assertEquals("Нажмите кнопку.", step.spokenFor("ru-RU").text)
     }
 
     @Test
-    fun `an unrelated transcript matches nothing`() {
-        assertNull(repo().matchByUtterance("what is the weather tomorrow"))
+    fun `a Cyrillic Russian utterance still matches the task`() {
+        val repo = TaskRepository.of(listOf(TaskRepository.parse(JSONObject(json))))
+        assertEquals("pay_bill", repo.matchByUtterance("помоги оплатить счёт")?.id)
+    }
+
+    @Test
+    fun `an unrelated Russian transcript matches nothing`() {
+        val repo = TaskRepository.of(listOf(TaskRepository.parse(JSONObject(json))))
+        assertNull(repo.matchByUtterance("какая завтра погода"))
     }
 }

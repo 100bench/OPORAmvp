@@ -392,10 +392,12 @@ class SarvamPlanner private constructor(
             // the step id is authoritative, the model only chooses which step.
             val rid = dslStep?.resourceId ?: target.optString("resource_id")
 
-            // If the model gave us nothing to say, fall back to the DSL wording
-            // for the user's language rather than to an empty utterance.
-            val spokenText = args.optString("instruction").takeIf { it.isNotBlank() }
-                ?: dslStep?.spokenFor(spokenLanguage)?.text.orEmpty()
+            // Legacy task planning is still reachable from rehearsal flows,
+            // but the MVP surface is Russian-only. Foreign or empty model
+            // wording is replaced locally by the step's Russian phrase.
+            val proposedText = args.optString("instruction").trim()
+            val spokenText = proposedText.takeIf { it.isNotBlank() && Language.isRussianText(it) }
+                ?: dslStep?.spokenFor(Language.APP_DEFAULT)?.text.orEmpty()
 
             return PlannerResult(
                 version = 1,
@@ -406,13 +408,7 @@ class SarvamPlanner private constructor(
                 instruction = spokenText,
                 confidence = args.optDouble("confidence", 0.5),
                 reason = args.optString("reason", "").take(80),
-                // The model's own label is only a hint. Reconcile it against the
-                // script it actually wrote in: a wrong code is a 400 from Bulbul
-                // and the app going quietly mute.
-                language = Language.reconcile(
-                    spokenText,
-                    args.optString("language").takeIf { it.isNotBlank() } ?: spokenLanguage,
-                ),
+                language = Language.APP_DEFAULT,
             )
         }
         fun parseOpenEnded(raw: String, spokenLanguage: String, transcript: String): PlannerResult? {
@@ -448,15 +444,6 @@ class SarvamPlanner private constructor(
             val instruction = (args.opt("instruction") as? String)?.trim()
                 ?: return invalidGuidance()
             if (instruction.isBlank()) return invalidGuidance()
-            val claimedLanguage = args.opt("language") as? String ?: return invalidGuidance()
-            if (claimedLanguage != Language.APP_DEFAULT ||
-                Language.reconcile(instruction, claimedLanguage) != Language.APP_DEFAULT
-            ) return invalidGuidance()
-            val confidence = (args.opt("confidence") as? Number)?.toDouble()
-                ?: return invalidGuidance()
-            if (!confidence.isFinite() || confidence !in 0.0..1.0) return invalidGuidance()
-            val reason = args.opt("reason") as? String ?: return invalidGuidance()
-
             val targetValue = args.opt("target")
             val target = when (targetValue) {
                 null -> null
@@ -466,6 +453,15 @@ class SarvamPlanner private constructor(
             if (target != null && !target.hasOnlyKeys(TARGET_KEYS)) return invalidGuidance()
             val resourceId = target.optionalString("resource_id") ?: return invalidGuidance()
             val targetText = target.optionalString("text") ?: return invalidGuidance()
+
+            val claimedLanguage = args.opt("language") as? String ?: return invalidGuidance()
+            if (claimedLanguage != Language.APP_DEFAULT ||
+                !Language.isRussianText(instruction, listOf(targetText))
+            ) return invalidGuidance()
+            val confidence = (args.opt("confidence") as? Number)?.toDouble()
+                ?: return invalidGuidance()
+            if (!confidence.isFinite() || confidence !in 0.0..1.0) return invalidGuidance()
+            val reason = args.opt("reason") as? String ?: return invalidGuidance()
 
             if (FinalActionPolicy.containsFinalActionInstruction(instruction)) {
                 return invalidGuidance()

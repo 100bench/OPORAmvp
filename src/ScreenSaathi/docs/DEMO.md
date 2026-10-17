@@ -1,59 +1,57 @@
-# Demo flows
+# Проверочные сценарии
 
-All three assume ScreenSaathi is installed, permissions are granted, and the
-Accessibility Service is enabled (see `README.md` → Installation).
+Все сценарии предполагают, что «Опора» установлена, разрешения выданы, а
+Accessibility Service включён.
 
-## 1 · Taxi booking — verified on device
+## 1 · Заказ такси — проверено на Samsung
 
-> **"Help me book a taxi."**
+Пользователь сам открывает Яндекс Go и говорит или вводит:
 
-```
-voice → intent → Uber discovered (real PackageManager lookup, not a
-hardcoded package) → Uber launched → live accessibility snapshot taken →
-"Where to?" resolved (ranked match, not a coordinate) → ring drawn around
-the real element → user taps it → screen-change detected → old ring
-cleared → new screen read
-```
-
-**Fallback if network/STT fails:** the deterministic `StepEngine` completes
-the same guided flow without any network call — same overlay, same
-highlight, no live speech.
-
-## 2 · Bill payment — verified, may require unlocking PhonePe
-
-> **"Help me pay my electricity bill."**
+> **«Хочу заказать такси».**
 
 ```
-voice → intent → PhonePe launched → home screen read (57 elements observed
-in testing) → "Electricity Bill" resolved (score 80, normalized match) →
-highlighted → user taps → Electricity screen read
+русская цель → локальная проверка безопасности → текущее UI-дерево →
+один структурированный шаг → цель разрешена в том же дереве →
+рамка вокруг реального элемента → пользователь нажимает сам →
+старый highlight удалён → новое UI-дерево → следующий шаг
 ```
 
-PhonePe can present its own security lock after the screen has been idle.
-**This is not bypassed.** If it appears: unlock PhonePe manually, then
-continue from where the flow left off.
+Этот путь вручную проверен пользователем на подключённом Samsung 18 октября
+2026 года и принят как ожидаемое поведение. В production-коде нет
+такси-специфичной последовательности, ветки по пакету Яндекс Go или
+захардкоженных экранов: результат является проверкой общего механизма.
 
-## 3 · A different app — architecture claim, partially verified
+Если сеть пропадает, подсказка приостанавливается с локальным сообщением и
+ограниченной попыткой восстановления. Приложение не продолжает наугад.
 
-Nothing in `TargetResolver` or `ScreenReaderService` is Uber- or
-PhonePe-specific — the same ranked-matching code runs against whatever the
-foreground app publishes to the accessibility tree. This has been spot-checked
-against a handful of other installed apps (Settings, the ScreenSaathi
-launcher's own app grid) with consistent behaviour.
+## 2 · Банковское приложение — локальная граница безопасности
 
-**What's honestly unverified:** broad coverage across arbitrary third-party
-apps. Some apps expose very little to accessibility; where that's true,
-`TargetResolver` returns `NotFound` and the assistant says it can't see the
-target, rather than guessing. That refusal is itself the intended, safe
-behaviour — not a bug to route around.
+На известном банковском пакете «Опора» до сетевого планировщика:
 
-## If something doesn't work during a live demo
+1. очищает текущую рамку;
+2. не запускает распознавание, planner или TTS для содержимого экрана;
+3. показывает русское локальное сообщение;
+4. передаёт управление пользователю.
 
-- **Stuck on "Thinking…"** — almost certainly the Accessibility Service got
-  disabled (reinstall, or a stray force-stop). See `docs/TROUBLESHOOTING.md`.
-- **No highlight appears** — the target genuinely wasn't found; try rephrasing,
-  or check `adb logcat -s TargetResolver:*` for the `NotFound`/`Ambiguous`
-  reason.
-- **Assistant missing entirely** — check window count
-  (`adb shell dumpsys window windows | grep -c "Window{.*com.screensaathi}"`);
-  if 0, tap **Start assistant** again from the app.
+Пароли, PIN, OTP, данные карты, оплата и финальное подтверждение также
+останавливают обычную цепочку подсказок. Эти поверхности не обходятся и не
+анализируются через скриншот.
+
+## 3 · Другое приложение — общий механизм
+
+В `TargetResolver`, `ScreenSafetyGate` и `ScreenReaderService` нет веток
+для конкретного пользовательского сценария. Один и тот же код работает с
+любым foreground-приложением, которое публикует пригодное UI-дерево.
+
+Если приложение почти ничего не отдаёт Accessibility, помощник честно сообщает,
+что не может прочитать выбранную область. Снимок экрана не делается, vision
+fallback отсутствует, по расположению пикселей приложение не угадывает.
+
+## Если демонстрация не работает
+
+- **Зависло на «Думаю…»** — проверьте Mac-прокси, VPN и USB reverse.
+- **Нет рамки** — цель не найдена однозначно; переформулируйте запрос или
+  проверьте `TargetResolver` в logcat.
+- **Помощника нет на экране** — снова нажмите «Запустить помощника».
+- **После переустановки не читается экран** — выключите и снова включите
+  Accessibility Service; Android может снять привязку после установки APK.

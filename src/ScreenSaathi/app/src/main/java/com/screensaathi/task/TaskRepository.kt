@@ -85,11 +85,7 @@ class TaskRepository private constructor(val tasks: List<GuidedTask>) {
             return TaskRepository(out)
         }
 
-        /**
-         * Optional `"instructions": { "hi-IN": "…" }` block on a step. Unknown
-         * or unspeakable codes are dropped here rather than at synthesis time,
-         * where they would surface as a silent 400 from Bulbul.
-         */
+        /** Keep only wording allowed by the Russian MVP language policy. */
         private fun parseInstructions(o: JSONObject?): Map<String, String> {
             if (o == null) return emptyMap()
             val out = LinkedHashMap<String, String>()

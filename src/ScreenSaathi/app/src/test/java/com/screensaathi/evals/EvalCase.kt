@@ -1,5 +1,6 @@
 package com.screensaathi.evals
 
+import com.screensaathi.sarvam.Language
 import com.screensaathi.task.GuidedTask
 import com.screensaathi.task.TaskStep
 import org.json.JSONObject
@@ -94,7 +95,11 @@ data class EvalCase(
                     acceptableSteps = exp.optJSONArray("acceptable_steps")
                         ?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
                     targetResourceId = exp.optString("target_resource_id").takeIf { it.isNotBlank() },
-                    language = exp.optString("language").takeIf { it.isNotBlank() },
+                    // v1 fixtures contain historical locale labels. The
+                    // current product contract scores every user-visible
+                    // response against the Russian-only MVP surface.
+                    language = exp.optString("language").takeIf { it.isNotBlank() }
+                        ?.let { Language.APP_DEFAULT },
                     mustResolveTarget = exp.optBoolean("must_resolve_target", false),
                     maxInstructionWords = exp.optInt("max_instruction_words", 0),
                     expectRejection = exp.optBoolean("expect_rejection", false),
