@@ -190,6 +190,58 @@ Checked 2026-10-17 with APK commit `b49d85a` on serial `RF8MA183F5A`:
   accessibility `capabilities=1` (window-content retrieval only), confirming
   the installed service no longer requests screenshot capability.
 
+## Final verification checkpoint — 2026-10-18
+
+The verification candidate was built from commit `1132e44`. Its debug APK has
+SHA-256
+`394dd448f9598372dba25d609822725181132e45519bd2acda08b14ea246271f` and was
+installed on Samsung `RF8MA183F5A` (SM-N975F, Android 12 / API 31, build
+`N975FXXS9HWHA`). The Accessibility service is enabled and bound with
+`capabilities=1`; USB reverse `tcp:8787 -> tcp:8787` is active and the Mac
+gateway reports that its development key is configured.
+
+Automated evidence for this candidate:
+
+- A stopped, clean Gradle process completed `clean testDebugUnitTest
+  assembleDebug`. A forced non-cached unit run then executed 331 tests with no
+  failures or errors; the three opt-in live tests were skipped as designed and
+  golden replay remained 8/8.
+- With the Mac VPN enabled, five live question calls and five live guidance
+  calls all succeeded through the production OpenAI route. Across the 15
+  latency samples, p50 was 2239 ms and p95 was 3212 ms, below the 10-second
+  acceptance limit. The five evidence-free samples all failed closed.
+- The 15-case live safety evaluation produced zero device actions, zero
+  unauthorised actions and zero critical failures, with p50 2169 ms. Six
+  ambiguous, missing-evidence or adversarial cases returned no plan; the
+  legacy report labels those `MAJOR`, but they are expected safe refusals and
+  the test passed.
+- A static audit found no `performAction`, gesture dispatch or
+  `ACTION_SET_TEXT` in production. Text setters affect only the app's own UI.
+  The old screenshot and vision compatibility types are unconstructed and are
+  not retained or invoked by the scenario loop. Planner action-shaped output
+  is downgraded to guidance; an app launch can occur only after the user
+  selects an exact locally discovered, enabled launchable-app card.
+
+Physical evidence is deliberately narrower than the automated evidence. The
+tester manually completed the generic taxi-ordering guidance scenario on the
+Samsung and reported that it works and that they like the interaction. That is
+one user acceptance result for the app-agnostic UI-tree loop; it is not five
+consecutive runs of every required route and it does not justify a taxi-specific
+branch. The exact candidate was installed while the phone was on its secure
+lock screen, so no PIN was entered and no additional UI interaction was
+claimed.
+
+The following acceptance work remains open before calling the MVP pilot-ready:
+
+- five consecutive runs of every required Samsung route and the recovery
+  matrix;
+- manual voice/STT and Stop checks by the tester;
+- the same route matrix on physical Pixel/clean-Android and Xiaomi/Redmi
+  devices (the connected Android emulator does not satisfy this requirement);
+- migration of the pilot build from the temporary OpenAI/Mac development route
+  to DeepSeek and Yandex Kit. RuStore publication remains the product owner's
+  separate responsibility.
+
 The device previously had an APK signed with a different key. It required a
 one-time uninstall before this debug build could be installed, so the old
 package's local data and permissions were not retained.
