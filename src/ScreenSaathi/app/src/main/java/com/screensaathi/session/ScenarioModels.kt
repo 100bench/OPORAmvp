@@ -117,6 +117,7 @@ enum class ScenarioChoice {
 
 sealed interface ScenarioEvent {
     object StartRequested : ScenarioEvent
+    data class ResumeRequested(val capsule: ResumeCapsule) : ScenarioEvent
 
     data class GoalRecognized(
         val goal: String,

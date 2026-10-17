@@ -78,6 +78,16 @@ class UniversalGuidanceLoop(
         dispatch(ScenarioEvent.GoalRecognized(goal, targetPackage, ambiguous), token)
     }
 
+    /** Restore only logical progress; live safety and target resolution rerun. */
+    fun resume(capsule: ResumeCapsule) {
+        val token = generation.incrementAndGet()
+        synchronized(lock) {
+            state = ScenarioSession.idle(clock())
+            pendingTarget = null
+        }
+        dispatch(ScenarioEvent.ResumeRequested(capsule), token)
+    }
+
     fun confirmRecognition() = dispatch(ScenarioEvent.RecognitionConfirmed, generation.get())
 
     fun repeatRecognition() = dispatch(ScenarioEvent.RepeatRecognition, generation.get())

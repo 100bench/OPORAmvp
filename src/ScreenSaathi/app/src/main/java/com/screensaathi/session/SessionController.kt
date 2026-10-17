@@ -20,6 +20,7 @@ import com.screensaathi.circle.SelectionShape
 import com.screensaathi.device.DeviceContextProvider
 import androidx.core.content.ContextCompat
 import com.screensaathi.AppLauncher
+import com.screensaathi.SaathiApp
 import com.screensaathi.ScreenReaderService
 import com.screensaathi.overlay.DecisionButtons
 import com.screensaathi.overlay.DecisionChoice
@@ -105,6 +106,9 @@ class SessionController(
     private val tts = SarvamTts()
     private val player = AudioPlayer(context)
     private val networkMonitor: NetworkMonitor = AndroidNetworkMonitor(context)
+    private val resumeCapsules: ResumeCapsuleStore =
+        (context.applicationContext as? SaathiApp)?.resumeCapsuleStore
+            ?: AndroidResumeCapsuleStore(context)
 
     /** The app-agnostic reducer/planner loop used by all new text and voice goals. */
     private val universalLoop: UniversalGuidanceLoop by lazy {
@@ -130,6 +134,7 @@ class SessionController(
     @Volatile private var pendingScenarioSecondary: ScenarioChoice? = null
     @Volatile private var pendingScenarioChoices: List<ScenarioChoice> = emptyList()
     @Volatile private var pendingTargetAppPackage: String? = null
+    @Volatile private var pendingResumeCapsule: ResumeCapsule? = null
     private val screenObservationId = AtomicInteger(0)
 
     @Volatile private var isRecording = false
@@ -214,6 +219,31 @@ class SessionController(
      */
     fun micLevel(): Float = if (isRecording) recorder.level else 0f
 
+    /** Offer a valid process-restoration capsule after the overlay is visible. */
+    fun offerResumeIfAvailable() {
+        val observedTurn = turnId.get()
+        bg.post {
+            val capsule = resumeCapsules.load() ?: return@post
+            if (!isCurrent(observedTurn) || universalActive) return@post
+            pendingResumeCapsule = capsule
+            pendingScenarioPrimary = ScenarioChoice.CONTINUE
+            pendingScenarioSecondary = ScenarioChoice.STOP
+            currentDecisionButtons = DecisionButtons.CONTINUE_OR_STOP
+            currentChoices = emptyList()
+            renderIfCurrent(
+                observedTurn,
+                OverlayCommand(
+                    PillState.GUIDING,
+                    expanded = true,
+                    instruction = "Продолжить предыдущую пошаговую помощь? Текущий экран будет проверен заново.",
+                    language = lastLanguage,
+                    highlight = null,
+                    decisionButtons = currentDecisionButtons,
+                ),
+            )
+        }
+    }
+
     fun onMicTapped() {
         if (!isRecording) startListening() else stopAndProcess()
     }
@@ -222,6 +252,8 @@ class SessionController(
     fun onTextSubmitted(text: String) {
         if (text.isBlank()) return
         val turn = newTurn()
+        pendingResumeCapsule = null
+        bg.post { resumeCapsules.delete() }
         stopUniversalForReplacement(turn)
         abandonRecording(turn)
         player.stop()
@@ -250,6 +282,66 @@ class SessionController(
             pendingScenarioSecondary
         }
         if (scenarioChoice != null) {
+            val resume = pendingResumeCapsule
+            if (
+                resume != null &&
+                scenarioChoice in setOf(ScenarioChoice.CONTINUE, ScenarioChoice.STOP)
+            ) {
+                val turn = newTurn()
+                pendingResumeCapsule = null
+                stopped = scenarioChoice == ScenarioChoice.STOP
+                player.stop()
+                clearScenarioDecisions()
+                currentChoices = emptyList()
+                currentHighlight = null
+                if (scenarioChoice == ScenarioChoice.STOP) {
+                    bg.post { resumeCapsules.delete() }
+                    val phrase = Phrases.get(Phrases.Key.STOPPED, lastLanguage)
+                    renderIfCurrent(
+                        turn,
+                        OverlayCommand(
+                            PillState.IDLE,
+                            expanded = true,
+                            instruction = phrase.text,
+                            language = phrase.language,
+                            highlight = null,
+                        ),
+                    )
+                } else {
+                    universalActive = true
+                    universalTurn = turn
+                    renderIfCurrent(
+                        turn,
+                        OverlayCommand(
+                            PillState.THINKING,
+                            expanded = true,
+                            instruction = "Проверяю текущий экран перед продолжением…",
+                            language = lastLanguage,
+                            highlight = null,
+                        ),
+                    )
+                    bg.post {
+                        val refreshed = resumeCapsules.load()
+                        if (!universalActive || !isCurrent(turn)) return@post
+                        if (refreshed == null || refreshed != resume) {
+                            universalActive = false
+                            renderIfCurrent(
+                                turn,
+                                OverlayCommand(
+                                    PillState.ERROR,
+                                    expanded = true,
+                                    instruction = "Сохранённая сессия истекла. Скажите или напишите цель заново.",
+                                    language = lastLanguage,
+                                    highlight = null,
+                                ),
+                            )
+                            return@post
+                        }
+                        universalLoop.resume(refreshed)
+                    }
+                }
+                return
+            }
             val targetPackage = pendingTargetAppPackage
             val retryPhase = universalLoop.session.phase
             stopped = false
@@ -373,6 +465,8 @@ class SessionController(
      */
     fun onStopTapped() {
         val turn = newTurn()
+        pendingResumeCapsule = null
+        bg.post { resumeCapsules.delete() }
         if (universalActive) {
             universalTurn = turn
             universalLoop.stop()
@@ -444,9 +538,14 @@ class SessionController(
             ScenarioEffect.BeginRecognition -> startListening(replacingUniversal = false)
             ScenarioEffect.AnalyzeCurrentScreen,
             is ScenarioEffect.RetryPlanning,
-            ScenarioEffect.SaveResumeCapsule,
-            ScenarioEffect.DeleteResumeCapsule,
             -> Unit
+
+            ScenarioEffect.SaveResumeCapsule -> {
+                val safeSession = universalLoop.session
+                bg.post { resumeCapsules.save(safeSession) }
+            }
+
+            ScenarioEffect.DeleteResumeCapsule -> bg.post { resumeCapsules.delete() }
 
             ScenarioEffect.ClearHighlight -> {
                 currentHighlight = null
@@ -777,6 +876,8 @@ class SessionController(
      */
     fun startTaskById(taskId: String, language: String = lastLanguage) {
         val turn = newTurn()
+        pendingResumeCapsule = null
+        bg.post { resumeCapsules.delete() }
         stopUniversalForReplacement(turn)
         abandonRecording(turn)
         stopped = false
@@ -814,6 +915,8 @@ class SessionController(
     private fun startListening(replacingUniversal: Boolean = true) {
         val turn = newTurn()
         if (replacingUniversal) {
+            pendingResumeCapsule = null
+            bg.post { resumeCapsules.delete() }
             stopUniversalForReplacement(turn)
         } else {
             universalTurn = turn

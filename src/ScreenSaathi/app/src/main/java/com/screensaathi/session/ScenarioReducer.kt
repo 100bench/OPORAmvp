@@ -13,6 +13,7 @@ object ScenarioReducer {
 
         return when (event) {
             ScenarioEvent.StartRequested -> start(session, nowMs)
+            is ScenarioEvent.ResumeRequested -> resume(session, event.capsule, nowMs)
             is ScenarioEvent.GoalRecognized -> goalRecognized(session, event, nowMs)
             ScenarioEvent.RecognitionConfirmed -> recognitionConfirmed(session, nowMs)
             ScenarioEvent.RepeatRecognition -> repeatRecognition(session, nowMs)
@@ -50,6 +51,25 @@ object ScenarioReducer {
         return ScenarioTransition(
             session = ScenarioSession.idle(nowMs).copy(phase = ScenarioPhase.RECOGNIZING_GOAL),
             effects = listOf(ScenarioEffect.BeginRecognition),
+        )
+    }
+
+    private fun resume(
+        session: ScenarioSession,
+        capsule: ResumeCapsule,
+        nowMs: Long,
+    ): ScenarioTransition {
+        if (session.phase != ScenarioPhase.IDLE) return unchanged(session)
+        return ScenarioTransition(
+            session = ScenarioSession.idle(nowMs).copy(
+                goal = capsule.goal,
+                targetPackage = capsule.targetPackage,
+                mode = capsule.mode,
+                phase = ScenarioPhase.ANALYZING_SCREEN,
+                stepNumber = capsule.stepNumber,
+                lastSafeInstruction = capsule.lastSafeInstruction,
+            ),
+            effects = listOf(ScenarioEffect.AnalyzeCurrentScreen),
         )
     }
 
@@ -633,7 +653,11 @@ object ScenarioReducer {
         if (session.phase != ScenarioPhase.FAILED) return unchanged(session)
         return ScenarioTransition(
             ScenarioSession.idle(nowMs).copy(phase = ScenarioPhase.RECOGNIZING_GOAL),
-            listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.BeginRecognition),
+            listOf(
+                ScenarioEffect.ClearHighlight,
+                ScenarioEffect.DeleteResumeCapsule,
+                ScenarioEffect.BeginRecognition,
+            ),
         )
     }
 
@@ -652,7 +676,11 @@ object ScenarioReducer {
                 currentGuidance = null,
                 updatedAtMs = nowMs,
             ),
-            listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.AnalyzeCurrentScreen),
+            listOf(
+                ScenarioEffect.ClearHighlight,
+                ScenarioEffect.DeleteResumeCapsule,
+                ScenarioEffect.AnalyzeCurrentScreen,
+            ),
         )
     }
 
