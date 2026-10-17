@@ -81,7 +81,7 @@
         </LinearLayout>
 
         <LinearLayout
-            android:id="@+id/confirmation_row"
+            android:id="@+id/decision_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
@@ -89,24 +89,24 @@
             android:visibility="gone">
 
             <TextView
-                android:id="@+id/decline_button"
+                android:id="@+id/decision_secondary_button"
                 android:layout_width="0dp"
                 android:layout_height="48dp"
                 android:layout_weight="1"
                 android:background="@drawable/ghost_btn_bg"
                 android:gravity="center"
-                android:text="Отказаться"
+                android:text="@string/decision_stop"
                 android:textColor="@color/saathi_text" />
 
             <TextView
-                android:id="@+id/confirm_button"
+                android:id="@+id/decision_primary_button"
                 android:layout_width="0dp"
                 android:layout_height="48dp"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
                 android:background="@drawable/mic_btn_bg"
                 android:gravity="center"
-                android:text="Подтвердить"
+                android:text="@string/decision_continue"
                 android:textColor="@color/saathi_text"
                 android:textStyle="bold" />
         </LinearLayout>

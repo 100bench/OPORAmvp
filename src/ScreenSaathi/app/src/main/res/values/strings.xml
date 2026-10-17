@@ -12,4 +12,13 @@
     <string name="launcher_discovery_failed">Не удалось прочитать список приложений</string>
     <string name="launcher_cannot_open">Не удалось открыть %1$s</string>
     <string name="mic_label">Говорить с «Опорой»</string>
+
+    <!-- Universal scenario decisions -->
+    <string name="decision_correct">Верно</string>
+    <string name="decision_repeat">Повторить</string>
+    <string name="decision_start">Начать</string>
+    <string name="decision_cancel">Отмена</string>
+    <string name="decision_stop">Остановить</string>
+    <string name="decision_continue">Продолжить</string>
+    <string name="decision_call">Позвонить</string>
 </resources>

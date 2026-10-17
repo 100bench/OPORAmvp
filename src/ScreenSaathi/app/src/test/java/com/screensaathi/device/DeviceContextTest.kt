@@ -122,6 +122,50 @@ class DeviceContextTest {
         assertTrue("must ask, not guess", SafetyGuard.validateLaunch(r) is SafetyGuard.Verdict.Block)
     }
 
+    @Test
+    fun `ambiguous resolution has no launch until user taps an exact package`() {
+        val c = DeviceContext(
+            listOf(
+                DeviceApp("Yandex Go", "ru.yandex.taxi", true),
+                DeviceApp("Yandex Maps", "ru.yandex.yandexmaps", true),
+            ),
+            visible, Evidence.PACKAGE_MANAGER, 1L,
+        )
+        val resolution = c.resolveApp("Yandex")
+        val awaitingTap = AppLaunchSelection.awaiting(resolution)
+
+        assertTrue(resolution.isAmbiguous)
+        assertEquals(null, awaitingTap.launchPackage)
+        assertEquals(
+            "ru.yandex.taxi",
+            awaitingTap.onUserTapped("ru.yandex.taxi").launchPackage,
+        )
+    }
+
+    @Test
+    fun `selection rejects model invented disabled and unlaunchable packages`() {
+        val resolution = ctx(
+            uber,
+            DeviceApp("Disabled", "com.example.disabled", launchable = true, enabled = false),
+            DeviceApp("No launcher", "com.example.hidden", launchable = false),
+        ).resolveApp("Uber", rideLabels)
+        val awaitingTap = AppLaunchSelection.awaiting(resolution)
+
+        assertEquals(null, awaitingTap.onUserTapped("com.example.invented").launchPackage)
+
+        val all = AppResolution(
+            query = "apps",
+            availability = Availability.KNOWN_PRESENT,
+            matches = listOf(
+                DeviceApp("Disabled", "com.example.disabled", launchable = true, enabled = false),
+                DeviceApp("No launcher", "com.example.hidden", launchable = false),
+            ),
+            evidence = Evidence.PACKAGE_MANAGER,
+        )
+        assertEquals(null, AppLaunchSelection.awaiting(all).onUserTapped("com.example.disabled").launchPackage)
+        assertEquals(null, AppLaunchSelection.awaiting(all).onUserTapped("com.example.hidden").launchPackage)
+    }
+
     // --- 10: the model cannot invent apps -------------------------------------
 
     @Test

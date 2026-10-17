@@ -8,6 +8,25 @@ package com.screensaathi.overlay
 
 enum class PillState { IDLE, LISTENING, THINKING, SPEAKING, GUIDING, ERROR }
 
+enum class DecisionChoice { PRIMARY, SECONDARY }
+
+data class DecisionButtons(
+    val primaryLabel: String,
+    val secondaryLabel: String,
+) {
+    init {
+        require(primaryLabel.isNotBlank()) { "Primary decision label cannot be blank" }
+        require(secondaryLabel.isNotBlank()) { "Secondary decision label cannot be blank" }
+    }
+
+    companion object {
+        val VERIFY_OR_REPEAT = DecisionButtons("Верно", "Повторить")
+        val START_OR_CANCEL = DecisionButtons("Начать", "Отмена")
+        val RETRY_OR_STOP = DecisionButtons("Повторить", "Остановить")
+        val CONTINUE_OR_STOP = DecisionButtons("Продолжить", "Остановить")
+    }
+}
+
 data class HighlightBounds(
     val left: Int,
     val top: Int,
@@ -35,6 +54,6 @@ data class OverlayCommand(
      * entry and reports back the index that was tapped.
      */
     val choices: List<String> = emptyList(),
-    /** Show the one-shot Confirm / Decline gate for a pending local action. */
-    val confirmationRequired: Boolean = false,
+    /** Optional two-way decision; concrete app cards remain in [choices]. */
+    val decisionButtons: DecisionButtons? = null,
 )

@@ -45,7 +45,17 @@ object AppLauncher {
      */
     fun launchApp(context: Context, appName: String): Boolean {
         val pkg = resolvePackageName(context, appName) ?: return false
-        val intent = context.packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        return launchPackage(context, pkg)
+    }
+
+    /**
+     * Opens exactly the package captured from a user-selected
+     * [com.screensaathi.device.DeviceApp].
+     * No label search or model-provided fallback is allowed on this path.
+     */
+    fun launchPackage(context: Context, packageName: String): Boolean {
+        if (packageName.isBlank()) return false
+        val intent = context.packageManager.getLaunchIntentForPackage(packageName) ?: return false
         // Resume an existing task rather than starting a cold copy: the user may
         // already be signed in and part-way through.
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)

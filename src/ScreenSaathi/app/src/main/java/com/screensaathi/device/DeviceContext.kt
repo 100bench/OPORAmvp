@@ -69,6 +69,27 @@ data class AppResolution(
 }
 
 /**
+ * Pure gate between app resolution and an exact launch request. Resolution by
+ * itself can never produce [launchPackage]; only [onUserTapped] can.
+ */
+class AppLaunchSelection private constructor(
+    val resolution: AppResolution,
+    val launchPackage: String?,
+) {
+    fun onUserTapped(packageName: String): AppLaunchSelection {
+        val selected = resolution.matches.singleOrNull {
+            it.packageName == packageName && it.enabled && it.launchable
+        }
+        return AppLaunchSelection(resolution, selected?.packageName)
+    }
+
+    companion object {
+        fun awaiting(resolution: AppResolution): AppLaunchSelection =
+            AppLaunchSelection(resolution, launchPackage = null)
+    }
+}
+
+/**
  * Deterministic and constructible in tests — no Android types in the model, so
  * the resolution policy can be unit-tested without a device.
  */

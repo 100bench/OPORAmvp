@@ -19,7 +19,10 @@ import com.screensaathi.circle.SelectionPoint
 import com.screensaathi.circle.SelectionShape
 import com.screensaathi.device.DeviceContextProvider
 import androidx.core.content.ContextCompat
+import com.screensaathi.AppLauncher
 import com.screensaathi.ScreenReaderService
+import com.screensaathi.overlay.DecisionButtons
+import com.screensaathi.overlay.DecisionChoice
 import com.screensaathi.overlay.HighlightBounds
 import com.screensaathi.overlay.OverlayCommand
 import com.screensaathi.overlay.PillState
@@ -162,7 +165,7 @@ class SessionController(
 
     /** Only locally-created allow-listed actions can ever enter this slot. */
     @Volatile private var pendingAction: PendingAction? = null
-    @Volatile private var currentConfirmationRequired = false
+    @Volatile private var currentDecisionButtons: DecisionButtons? = null
 
     /** Diagnostics for the live turn, shown by long-pressing the pill. */
     @Volatile private var debug = VoiceDebug()
@@ -196,7 +199,7 @@ class SessionController(
         player.stop()
         stopped = false
         pendingAction = null
-        currentConfirmationRequired = false
+        currentDecisionButtons = null
         currentHighlight = null
         currentChoices = emptyList()
         lastUserRequest = text.trim()
@@ -212,13 +215,18 @@ class SessionController(
         }
     }
 
-    fun onConfirmTapped() {
+    fun onDecisionTapped(choice: DecisionChoice) {
         val pending = pendingAction ?: return
         val turn = newTurn()
-        pendingAction = null // consume before doing anything: confirmation is one-shot
-        currentConfirmationRequired = false
+        pendingAction = null // consume before doing anything: decisions are one-shot
+        currentDecisionButtons = null
         currentHighlight = null
         currentChoices = emptyList()
+
+        if (choice == DecisionChoice.SECONDARY) {
+            showLocalMessage(turn, "Действие отменено.", PillState.IDLE)
+            return
+        }
 
         if (SystemClock.elapsedRealtime() > pending.expiresAtMs) {
             showLocalMessage(turn, "Подтверждение истекло. Повторите просьбу.", PillState.ERROR)
@@ -230,21 +238,12 @@ class SessionController(
         }
     }
 
-    fun onDeclineTapped() {
-        val turn = newTurn()
-        pendingAction = null
-        currentConfirmationRequired = false
-        currentHighlight = null
-        currentChoices = emptyList()
-        showLocalMessage(turn, "Действие отменено.", PillState.IDLE)
-    }
-
     fun onNextTapped() {
         // Opening a turn here invalidates any plan still in flight, so a slow
         // planner response cannot yank the user back a step after they advance.
         val turn = newTurn()
         pendingAction = null
-        currentConfirmationRequired = false
+        currentDecisionButtons = null
         abandonRecording(turn)
         stopped = false
         val e = engine
@@ -281,7 +280,7 @@ class SessionController(
         abandonRecording(turn)
         stopped = true
         pendingAction = null
-        currentConfirmationRequired = false
+        currentDecisionButtons = null
         player.stop()
         currentHighlight = null
         lastHighlightQuery = null
@@ -346,7 +345,7 @@ class SessionController(
         val turn = newTurn()
         stopped = false
         pendingAction = null
-        currentConfirmationRequired = false
+        currentDecisionButtons = null
 
         // A denied microphone used to fail silently: recorder.start() returned
         // false and the app quietly ran the deterministic task, so the user was
@@ -1454,13 +1453,13 @@ class SessionController(
                 renderIfCurrent(turn, OverlayCommand(PillState.SPEAKING, expanded = true,
                     instruction = spoken.text, language = spoken.language,
                     highlight = currentHighlight, choices = currentChoices,
-                    confirmationRequired = currentConfirmationRequired))
+                    decisionButtons = currentDecisionButtons))
             },
             onDone = {
                 renderIfCurrent(turn, OverlayCommand(PillState.GUIDING, expanded = true,
                     instruction = spoken.text, language = spoken.language,
                     highlight = currentHighlight, choices = currentChoices,
-                    confirmationRequired = currentConfirmationRequired))
+                    decisionButtons = currentDecisionButtons))
             },
         )
     }
@@ -1548,7 +1547,7 @@ class SessionController(
             publishDebug(turn) { it.copy(note = "choice launch blocked: ${choiceVerdict.reason}") }
         }
 
-        if (choiceVerdict is SafetyGuard.Verdict.Block || !RideApps.launch(context, app.packageName)) {
+        if (choiceVerdict is SafetyGuard.Verdict.Block || !AppLauncher.launchPackage(context, app.packageName)) {
             val failed = Phrases.get(Phrases.Key.APP_WONT_OPEN, lastLanguage)
             render(OverlayCommand(PillState.ERROR, expanded = true,
                 instruction = failed.text, language = failed.language,
@@ -1637,17 +1636,17 @@ class SessionController(
 
     private fun proposeAction(action: PendingAction, message: String, turn: Int) {
         pendingAction = action
-        currentConfirmationRequired = true
+        currentDecisionButtons = DecisionButtons("Позвонить", "Отмена")
         currentHighlight = null
         currentChoices = emptyList()
         renderIfCurrent(turn, OverlayCommand(PillState.GUIDING, expanded = true,
             instruction = "$message Подтверждение действует 30 секунд.",
-            language = Language.APP_DEFAULT, confirmationRequired = true))
+            language = Language.APP_DEFAULT, decisionButtons = currentDecisionButtons))
         speech.post { speak(Spoken(message, Language.APP_DEFAULT), turn) }
         bg.postDelayed({
             if (pendingAction === action) {
                 pendingAction = null
-                currentConfirmationRequired = false
+                currentDecisionButtons = null
                 showLocalMessage(turn, "Подтверждение истекло. Повторите просьбу.", PillState.IDLE)
             }
         }, CONFIRM_TTL_MS)
@@ -1675,8 +1674,7 @@ class SessionController(
 
     private fun showLocalMessage(turn: Int, message: String, state: PillState) {
         renderIfCurrent(turn, OverlayCommand(state, expanded = true,
-            instruction = message, language = Language.APP_DEFAULT,
-            confirmationRequired = false))
+            instruction = message, language = Language.APP_DEFAULT))
         speech.post { speak(Spoken(message, Language.APP_DEFAULT), turn) }
     }
 

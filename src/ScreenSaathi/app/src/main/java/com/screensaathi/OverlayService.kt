@@ -26,6 +26,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.screensaathi.overlay.AssistantUiState
+import com.screensaathi.overlay.DecisionButtons
+import com.screensaathi.overlay.DecisionChoice
 import com.screensaathi.overlay.HighlightView
 import com.screensaathi.overlay.OverlayCommand
 import com.screensaathi.overlay.PillLabels
@@ -60,7 +62,9 @@ class OverlayService : Service() {
     private lateinit var debugPanel: TextView
     private lateinit var choiceRow: LinearLayout
     private lateinit var choiceButtons: List<TextView>
-    private lateinit var confirmationRow: LinearLayout
+    private lateinit var decisionRow: LinearLayout
+    private lateinit var decisionPrimaryButton: TextView
+    private lateinit var decisionSecondaryButton: TextView
     private lateinit var textCommand: EditText
 
     private var expanded = false
@@ -195,12 +199,14 @@ class OverlayService : Service() {
         choiceButtons.forEachIndexed { i, b ->
             b.setOnClickListener { controller.onChoiceTapped(i) }
         }
-        confirmationRow = pillRoot.findViewById(R.id.confirmation_row)
-        pillRoot.findViewById<View>(R.id.confirm_button).setOnClickListener {
-            controller.onConfirmTapped()
+        decisionRow = pillRoot.findViewById(R.id.decision_row)
+        decisionPrimaryButton = pillRoot.findViewById(R.id.decision_primary_button)
+        decisionSecondaryButton = pillRoot.findViewById(R.id.decision_secondary_button)
+        decisionPrimaryButton.setOnClickListener {
+            controller.onDecisionTapped(DecisionChoice.PRIMARY)
         }
-        pillRoot.findViewById<View>(R.id.decline_button).setOnClickListener {
-            controller.onDeclineTapped()
+        decisionSecondaryButton.setOnClickListener {
+            controller.onDecisionTapped(DecisionChoice.SECONDARY)
         }
         textCommand = pillRoot.findViewById(R.id.text_command)
         textCommand.setOnClickListener { focusTextInput() }
@@ -647,8 +653,7 @@ class OverlayService : Service() {
 
         cmd.instruction?.let { instructionText.text = it }
         renderChoices(cmd.choices)
-        confirmationRow.visibility =
-            if (cmd.confirmationRequired) View.VISIBLE else View.GONE
+        renderDecision(cmd.decisionButtons)
 
         if (cmd.expanded != expanded) setExpanded(cmd.expanded)
 
@@ -712,6 +717,13 @@ class OverlayService : Service() {
             button.visibility = if (label == null) View.GONE else View.VISIBLE
             if (label != null) button.text = label
         }
+    }
+
+    private fun renderDecision(buttons: DecisionButtons?) {
+        decisionRow.visibility = if (buttons == null) View.GONE else View.VISIBLE
+        if (buttons == null) return
+        decisionPrimaryButton.text = buttons.primaryLabel
+        decisionSecondaryButton.text = buttons.secondaryLabel
     }
 
     private fun focusTextInput() {
