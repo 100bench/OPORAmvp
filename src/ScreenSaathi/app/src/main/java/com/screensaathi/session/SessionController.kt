@@ -104,6 +104,7 @@ class SessionController(
     private val planner = SarvamPlanner(context)
     private val tts = SarvamTts()
     private val player = AudioPlayer(context)
+    private val networkMonitor: NetworkMonitor = AndroidNetworkMonitor(context)
 
     /** The app-agnostic reducer/planner loop used by all new text and voice goals. */
     private val universalLoop: UniversalGuidanceLoop by lazy {
@@ -250,10 +251,28 @@ class SessionController(
         }
         if (scenarioChoice != null) {
             val targetPackage = pendingTargetAppPackage
+            val retryPhase = universalLoop.session.phase
             stopped = false
             player.stop()
             clearScenarioDecisions()
             val turn = universalTurn
+            if (scenarioChoice == ScenarioChoice.RETRY) {
+                val retryingNetwork = retryPhase == ScenarioPhase.PAUSED_FOR_NETWORK
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.THINKING,
+                        expanded = true,
+                        instruction = if (retryingNetwork) {
+                            "Повторно проверяю подключение и текущий экран…"
+                        } else {
+                            "Повторяю попытку…"
+                        },
+                        language = lastLanguage,
+                        highlight = if (retryingNetwork) null else currentHighlight,
+                    ),
+                )
+            }
             bg.post {
                 if (universalActive && isCurrent(turn)) {
                     handleScenarioChoice(scenarioChoice, targetPackage)
@@ -438,6 +457,23 @@ class SessionController(
                 player.stop()
                 screenObservationId.incrementAndGet()
             }
+
+            ScenarioEffect.StartNetworkMonitoring -> {
+                val observedTurn = turn
+                networkMonitor.start {
+                    bg.post {
+                        if (
+                            universalActive &&
+                            universalTurn == observedTurn &&
+                            isCurrent(observedTurn)
+                        ) {
+                            universalLoop.networkRestored()
+                        }
+                    }
+                }
+            }
+
+            ScenarioEffect.StopNetworkMonitoring -> networkMonitor.stop()
 
             ScenarioEffect.StopSpeech -> player.stop()
 
@@ -2258,6 +2294,7 @@ class SessionController(
 
     fun dispose() {
         turnId.incrementAndGet() // invalidate anything still in flight
+        networkMonitor.stop()
         if (instance === this) instance = null
         if (universalActive) {
             universalActive = false

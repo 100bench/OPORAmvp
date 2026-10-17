@@ -148,7 +148,29 @@ class UniversalGuidanceLoop(
 
     fun continueAfterAuth() = dispatch(ScenarioEvent.ContinueRequested, generation.get())
 
-    fun retry() = dispatch(ScenarioEvent.RetryRequested, generation.get())
+    fun retry() {
+        val token = generation.get()
+        if (session.phase == ScenarioPhase.PAUSED_FOR_NETWORK) {
+            val current = snapshotProvider()
+            dispatch(
+                ScenarioEvent.NetworkRecoveryRequested(
+                    fingerprint = current.signature(),
+                    automatic = false,
+                ),
+                token,
+            )
+        } else {
+            dispatch(ScenarioEvent.RetryRequested, token)
+        }
+    }
+
+    fun networkRestored(snapshot: ScreenSnapshot = snapshotProvider()) = dispatch(
+        ScenarioEvent.NetworkRecoveryRequested(
+            fingerprint = snapshot.signature(),
+            automatic = true,
+        ),
+        generation.get(),
+    )
 
     fun rephrase() = dispatch(ScenarioEvent.RephraseRequested, generation.get())
 

@@ -45,8 +45,9 @@ data class ScenarioGuidance(
 
 /**
  * Immutable universal-session state. [screenFingerprint] and
- * [currentGuidance] are transient, device-local coordination fields and must
- * not be written to the later ResumeCapsule.
+ * [currentGuidance], [networkAutoRetries] and [preserveReplanFailures] are
+ * transient, device-local coordination fields and must not be written to the
+ * later ResumeCapsule.
  */
 data class ScenarioSession(
     val goal: String,
@@ -61,6 +62,8 @@ data class ScenarioSession(
     val updatedAtMs: Long,
     val screenFingerprint: String? = null,
     val currentGuidance: ScenarioGuidance? = null,
+    val networkAutoRetries: Int = 0,
+    val preserveReplanFailures: Boolean = false,
 ) {
     companion object {
         fun idle(nowMs: Long): ScenarioSession = ScenarioSession(
@@ -138,6 +141,10 @@ sealed interface ScenarioEvent {
     object TargetNotFound : ScenarioEvent
     object AuthenticationRequired : ScenarioEvent
     object NetworkUnavailable : ScenarioEvent
+    data class NetworkRecoveryRequested(
+        val fingerprint: String,
+        val automatic: Boolean = false,
+    ) : ScenarioEvent
     object SafeHandoffRequired : ScenarioEvent
     data class PlannerFailed(val kind: ScenarioPlanningFailure) : ScenarioEvent
     object TtsFailed : ScenarioEvent
@@ -154,6 +161,8 @@ sealed interface ScenarioEffect {
     object AnalyzeCurrentScreen : ScenarioEffect
     object ClearHighlight : ScenarioEffect
     object CancelPendingWork : ScenarioEffect
+    object StartNetworkMonitoring : ScenarioEffect
+    object StopNetworkMonitoring : ScenarioEffect
     object StopSpeech : ScenarioEffect
     object SaveResumeCapsule : ScenarioEffect
     object DeleteResumeCapsule : ScenarioEffect

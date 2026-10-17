@@ -30,6 +30,7 @@ object ScenarioReducer {
             ScenarioEvent.TargetNotFound -> targetNotFound(session, nowMs)
             ScenarioEvent.AuthenticationRequired -> authenticationRequired(session, nowMs)
             ScenarioEvent.NetworkUnavailable -> networkUnavailable(session, nowMs)
+            is ScenarioEvent.NetworkRecoveryRequested -> networkRecoveryRequested(session, event, nowMs)
             ScenarioEvent.SafeHandoffRequired -> safeHandoff(session, nowMs)
             is ScenarioEvent.PlannerFailed -> plannerFailed(session, event, nowMs)
             ScenarioEvent.TtsFailed -> ttsFailed(session)
@@ -171,6 +172,8 @@ object ScenarioReducer {
                 lastSafeInstruction = instruction,
                 currentGuidance = null,
                 replanFailures = 0,
+                networkAutoRetries = 0,
+                preserveReplanFailures = false,
                 updatedAtMs = nowMs,
             ),
             listOf(
@@ -195,6 +198,8 @@ object ScenarioReducer {
             currentGuidance = event.guidance,
             scrollAttempts = 0,
             replanFailures = 0,
+            networkAutoRetries = 0,
+            preserveReplanFailures = false,
             updatedAtMs = nowMs,
         )
         return if (isFirstGuide) {
@@ -280,7 +285,11 @@ object ScenarioReducer {
             ScenarioPhase.ANALYZING_SCREEN -> ScenarioTransition(
                 session.copy(
                     screenFingerprint = fingerprint,
-                    replanFailures = 0,
+                    replanFailures = if (session.preserveReplanFailures) {
+                        session.replanFailures
+                    } else {
+                        0
+                    },
                     updatedAtMs = nowMs,
                 ),
             )
@@ -414,20 +423,62 @@ object ScenarioReducer {
     }
 
     private fun networkUnavailable(session: ScenarioSession, nowMs: Long): ScenarioTransition {
-        if (session.phase in TERMINAL_PHASES) return unchanged(session)
+        if (session.phase in TERMINAL_PHASES || session.phase == ScenarioPhase.PAUSED_FOR_NETWORK) {
+            return unchanged(session)
+        }
         return ScenarioTransition(
             session.copy(
                 phase = ScenarioPhase.PAUSED_FOR_NETWORK,
                 currentGuidance = null,
                 updatedAtMs = nowMs,
             ),
-            listOf(
-                ScenarioEffect.ClearHighlight,
-                ScenarioEffect.ShowDecision(
-                    ScenarioNotice.NO_NETWORK,
-                    listOf(ScenarioChoice.RETRY, ScenarioChoice.STOP),
-                ),
+            buildList {
+                add(ScenarioEffect.ClearHighlight)
+                if (session.networkAutoRetries < MAX_AUTOMATIC_NETWORK_RETRIES) {
+                    add(ScenarioEffect.StartNetworkMonitoring)
+                }
+                add(
+                    ScenarioEffect.ShowDecision(
+                        ScenarioNotice.NO_NETWORK,
+                        listOf(ScenarioChoice.RETRY, ScenarioChoice.STOP),
+                    )
+                )
+            },
+        )
+    }
+
+    private fun networkRecoveryRequested(
+        session: ScenarioSession,
+        event: ScenarioEvent.NetworkRecoveryRequested,
+        nowMs: Long,
+    ): ScenarioTransition {
+        if (session.phase != ScenarioPhase.PAUSED_FOR_NETWORK) return unchanged(session)
+        if (
+            event.automatic &&
+            session.networkAutoRetries >= MAX_AUTOMATIC_NETWORK_RETRIES
+        ) {
+            return unchanged(session)
+        }
+        val observed = event.fingerprint.takeIf(String::isNotBlank)
+        val changed = observed != null && observed != session.screenFingerprint
+        return ScenarioTransition(
+            session.copy(
+                phase = ScenarioPhase.ANALYZING_SCREEN,
+                screenFingerprint = observed ?: session.screenFingerprint,
+                currentGuidance = null,
+                networkAutoRetries = if (event.automatic) {
+                    session.networkAutoRetries + 1
+                } else {
+                    MAX_AUTOMATIC_NETWORK_RETRIES
+                },
+                preserveReplanFailures = true,
+                updatedAtMs = nowMs,
             ),
+            buildList {
+                add(ScenarioEffect.StopNetworkMonitoring)
+                if (changed) add(ScenarioEffect.ClearHighlight)
+                add(ScenarioEffect.AnalyzeCurrentScreen)
+            },
         )
     }
 
@@ -546,15 +597,16 @@ object ScenarioReducer {
                 ),
             )
         }
-        if (session.phase !in setOf(ScenarioPhase.PAUSED_FOR_NETWORK, ScenarioPhase.FAILED)) {
+        if (session.phase != ScenarioPhase.FAILED) {
             return unchanged(session)
         }
-        val resetFailures = session.phase == ScenarioPhase.FAILED
         return ScenarioTransition(
             session.copy(
                 phase = ScenarioPhase.ANALYZING_SCREEN,
-                scrollAttempts = if (resetFailures) 0 else session.scrollAttempts,
-                replanFailures = if (resetFailures) 0 else session.replanFailures,
+                scrollAttempts = 0,
+                replanFailures = 0,
+                networkAutoRetries = 0,
+                preserveReplanFailures = false,
                 updatedAtMs = nowMs,
             ),
             listOf(ScenarioEffect.AnalyzeCurrentScreen),
@@ -595,6 +647,8 @@ object ScenarioReducer {
                 lastSafeInstruction = null,
                 scrollAttempts = 0,
                 replanFailures = 0,
+                networkAutoRetries = 0,
+                preserveReplanFailures = false,
                 currentGuidance = null,
                 updatedAtMs = nowMs,
             ),
@@ -606,6 +660,7 @@ object ScenarioReducer {
         ScenarioSession.idle(nowMs),
         listOf(
             ScenarioEffect.CancelPendingWork,
+            ScenarioEffect.StopNetworkMonitoring,
             ScenarioEffect.StopSpeech,
             ScenarioEffect.ClearHighlight,
             ScenarioEffect.DeleteResumeCapsule,
@@ -623,4 +678,5 @@ object ScenarioReducer {
     )
     private const val MAX_SCROLL_ATTEMPTS = 3
     private const val MAX_AUTOMATIC_RETRIES = 1
+    private const val MAX_AUTOMATIC_NETWORK_RETRIES = 1
 }

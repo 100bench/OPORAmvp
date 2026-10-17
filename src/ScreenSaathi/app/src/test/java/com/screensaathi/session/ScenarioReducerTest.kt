@@ -207,10 +207,16 @@ class ScenarioReducerTest {
         val network = reduce(analyzing, ScenarioEvent.NetworkUnavailable, 92)
         assertEquals(ScenarioPhase.PAUSED_FOR_NETWORK, network.session.phase)
         assertEquals(ScenarioNotice.NO_NETWORK, decision(network).notice)
+        assertTrue(network.effects.contains(ScenarioEffect.StartNetworkMonitoring))
 
-        val retried = reduce(network.session, ScenarioEvent.RetryRequested, 93)
+        val retried = reduce(
+            network.session,
+            ScenarioEvent.NetworkRecoveryRequested("screen-1"),
+            93,
+        )
         assertEquals(ScenarioPhase.ANALYZING_SCREEN, retried.session.phase)
         assertTrue(retried.effects.contains(ScenarioEffect.AnalyzeCurrentScreen))
+        assertTrue(retried.effects.contains(ScenarioEffect.StopNetworkMonitoring))
 
         val handoff = reduce(analyzing, ScenarioEvent.SafeHandoffRequired, 94)
         assertEquals(ScenarioPhase.SAFE_HANDOFF, handoff.session.phase)
