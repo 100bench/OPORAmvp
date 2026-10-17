@@ -2,6 +2,7 @@ package com.screensaathi.sarvam
 
 import android.content.Context
 import android.util.Log
+import com.screensaathi.screen.ScreenSanitizer
 import com.screensaathi.screen.ScreenSnapshot
 import com.screensaathi.task.GuidedTask
 import okhttp3.MediaType.Companion.toMediaType
@@ -104,7 +105,7 @@ class SarvamPlanner(context: Context) {
             append(" — reply in this language, in its own script.\n\n")
             append("Task: ").append(task.id).append(" — ").append(task.title).append("\n")
             append("Steps:\n").append(steps).append("\n\n")
-            append(screen.toPromptText())
+            append(ScreenSanitizer.sanitize(screen).toPromptText())
         }
     }
 
@@ -176,7 +177,7 @@ class SarvamPlanner(context: Context) {
             }
             append("Detected spoken language: ").append(Language.normalize(spokenLanguage))
             append(" — reply in this language, in its own script.\n\n")
-            append(screen.toPromptText())
+            append(ScreenSanitizer.sanitize(screen).toPromptText())
         }
 
         val openEndedSystemPrompt = "You are a safe screen guide for a Russian-speaking user. Preserve the user's original goal across screens and give exactly one next step at a time. You may only explain the current screen (answer) or point to one real visible element (guide). You never click, type, launch apps, make calls, or create executable actions. If text must be entered, point to the real input and clearly say what the user should type. If the request is ambiguous, ask one short clarifying question using answer. Set is_done=true only for an explanation, question, completed goal, or safe stopping point. Never guide the user to a final order, purchase, payment, or confirmation button; at checkout tell them to review the details and take over themselves. Always write instruction in natural Russian using Cyrillic and set language to ru-RU. For guide, copy one exact visible UI label into target_text. If the tree contains both a small caption and a larger tile/container with the same label, copy the exact label of the larger control so the whole control is highlighted."

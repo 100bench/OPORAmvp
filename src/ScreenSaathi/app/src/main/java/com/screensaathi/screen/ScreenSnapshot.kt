@@ -15,6 +15,15 @@ data class ScreenElement(
     val bounds: Rect,
     val editable: Boolean,
     val clickable: Boolean,
+    val contentDescription: String = "",
+    val hintText: String = "",
+    val enabled: Boolean = true,
+    val selected: Boolean = false,
+    val checked: Boolean = false,
+    val scrollable: Boolean = false,
+    val password: Boolean = false,
+    val inputType: Int = 0,
+    val visibleToUser: Boolean = true,
 )
 
 data class ScreenSnapshot(
@@ -77,24 +86,12 @@ data class ScreenSnapshot(
     fun elementForResourceId(resourceId: String): ScreenElement? =
         elements.firstOrNull { it.resourceId == resourceId }
 
-    /** Compact text form fed to the planner prompt. */
-    fun toPromptText(): String {
-        if (elements.isEmpty()) return "Screen: $packageName (no readable elements)"
-        val sb = StringBuilder("Screen: $packageName\nElements:\n")
-        for (e in elements) {
-            sb.append("[").append(e.index).append("] ")
-                .append(e.className)
-            if (e.resourceId.isNotEmpty()) sb.append(" id=").append(e.resourceId)
-            if (e.text.isNotEmpty()) sb.append(" \"").append(e.text).append("\"")
-            val flags = buildString {
-                if (e.editable) append("E")
-                if (e.clickable) append("C")
-            }
-            if (flags.isNotEmpty()) sb.append(" ").append(flags)
-            sb.append("\n")
-        }
-        return sb.toString()
-    }
+    /** Provider callers must cross the sanitizer boundary before serialization. */
+    @Deprecated(
+        message = "Use ScreenSanitizer.sanitize(snapshot).toPromptText()",
+        replaceWith = ReplaceWith("ScreenSanitizer.sanitize(this).toPromptText()"),
+    )
+    fun toPromptText(): String = ScreenSanitizer.sanitize(this).toPromptText()
 
     companion object {
         val EMPTY = ScreenSnapshot("", settled = false, elements = emptyList())

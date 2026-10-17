@@ -209,6 +209,15 @@ class ScreenReaderService : AccessibilityService() {
                         bounds = b,
                         editable = node.isEditable,
                         clickable = node.isClickable,
+                        contentDescription = rawDesc,
+                        hintText = rawHint,
+                        enabled = node.isEnabled,
+                        selected = node.isSelected,
+                        checked = node.isChecked,
+                        scrollable = node.isScrollable,
+                        password = node.isPassword,
+                        inputType = node.inputType,
+                        visibleToUser = node.isVisibleToUser,
                     )
                 )
             }

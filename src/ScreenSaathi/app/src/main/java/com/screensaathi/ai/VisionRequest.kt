@@ -40,8 +40,8 @@ data class VisionRequest(
 
     /**
      * Compact text rendering of the current screen, from
-     * `ScreenSnapshot.toPromptText()`. Gives the model the surrounding UI, not
-     * just the circled fragment.
+     * `ScreenSanitizer.sanitize(snapshot).toPromptText()`. Gives the model the
+     * safe surrounding UI, not just the circled fragment.
      */
     val screenDescription: String,
 

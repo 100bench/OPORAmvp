@@ -2,6 +2,7 @@ package com.screensaathi.screen
 
 import android.graphics.Rect
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -59,6 +60,22 @@ class TargetResolverTest {
         val result = TargetResolver.resolve("Calculator", snapshot)
 
         assertTrue(result is TargetResolver.Result.NotFound)
+    }
+
+    @Test
+    fun `resolver keeps using raw local bounds after planner DTO split`() {
+        val localBounds = Rect(31, 47, 731, 247)
+        val snapshot = ScreenSnapshot(
+            packageName = "ru.example.app",
+            settled = true,
+            elements = listOf(element(9, "Продолжить", localBounds)),
+        )
+
+        val result = TargetResolver.resolve("Продолжить", snapshot)
+
+        assertTrue(result is TargetResolver.Result.Found)
+        assertSame(localBounds, (result as TargetResolver.Result.Found).candidate.element.bounds)
+        assertTrue(PlannerElement::class.java.declaredFields.none { it.type.name == "android.graphics.Rect" })
     }
 
     private fun element(index: Int, text: String, bounds: Rect) = ScreenElement(
