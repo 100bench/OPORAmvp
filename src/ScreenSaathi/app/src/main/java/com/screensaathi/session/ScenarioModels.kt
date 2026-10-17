@@ -132,6 +132,9 @@ sealed interface ScenarioEvent {
     object GoalCancelled : ScenarioEvent
     object HighlightedTargetTapped : ScenarioEvent
     data class ScreenObserved(val fingerprint: String) : ScenarioEvent
+    data class PhysicalTapSettled(val fingerprint: String) : ScenarioEvent
+    object PhysicalTapTimedOut : ScenarioEvent
+    data class CachedGuideInvalidated(val fingerprint: String) : ScenarioEvent
     object TargetNotFound : ScenarioEvent
     object AuthenticationRequired : ScenarioEvent
     object NetworkUnavailable : ScenarioEvent

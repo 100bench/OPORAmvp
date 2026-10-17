@@ -34,7 +34,10 @@ class ScreenReaderService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_SCROLLED,
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
-            -> lastEventUptime = SystemClock.uptimeMillis()
+            -> {
+                lastEventUptime = SystemClock.uptimeMillis()
+                SessionController.instance?.onScreenContentChanged()
+            }
 
             // The one signal a screen transition is guaranteed to send. A tap
             // can visibly change the app without ever firing TYPE_VIEW_CLICKED

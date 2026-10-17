@@ -45,6 +45,23 @@ class ScenarioReducerTest {
     }
 
     @Test
+    fun `empty ambiguous STT offers repeat or stop instead of confirming an empty goal`() {
+        val recognizing = reduce(ScenarioSession.idle(0), ScenarioEvent.StartRequested, 1).session
+
+        val result = reduce(
+            recognizing,
+            ScenarioEvent.GoalRecognized("", targetPackage = null, ambiguous = true),
+            2,
+        )
+
+        val decision = result.effects.single() as ScenarioEffect.ShowDecision
+        assertEquals(
+            listOf(ScenarioChoice.REPEAT_RECOGNITION, ScenarioChoice.STOP),
+            decision.choices,
+        )
+    }
+
+    @Test
     fun `one shot answer completes without goal confirmation`() {
         val analyzing = recognized(goal = "Где история заказов?")
 
@@ -141,6 +158,41 @@ class ScenarioReducerTest {
     }
 
     @Test
+    fun `settled physical tap may reanalyze even when ordinary duplicate fingerprint is ignored`() {
+        val tapped = reduce(
+            guiding(screenFingerprint = "screen-1"),
+            ScenarioEvent.HighlightedTargetTapped,
+            84,
+        ).session
+
+        val ordinaryDuplicate = reduce(tapped, ScenarioEvent.ScreenObserved("screen-1"), 85)
+        assertEquals(ScenarioPhase.WAITING_FOR_SCREEN_CHANGE, ordinaryDuplicate.session.phase)
+
+        val settledTap = reduce(
+            ordinaryDuplicate.session,
+            ScenarioEvent.PhysicalTapSettled("screen-1"),
+            86,
+        )
+        assertEquals(ScenarioPhase.ANALYZING_SCREEN, settledTap.session.phase)
+        assertTrue(settledTap.effects.contains(ScenarioEffect.AnalyzeCurrentScreen))
+    }
+
+    @Test
+    fun `physical tap timeout requests local manual recovery`() {
+        val tapped = reduce(
+            guiding(screenFingerprint = "screen-1"),
+            ScenarioEvent.HighlightedTargetTapped,
+            87,
+        ).session
+
+        val timeout = reduce(tapped, ScenarioEvent.PhysicalTapTimedOut, 88)
+
+        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, timeout.session.phase)
+        assertTrue(timeout.effects.contains(ScenarioEffect.RequestManualScroll))
+        assertTrue(timeout.effects.none { it is ScenarioEffect.AnalyzeCurrentScreen })
+    }
+
+    @Test
     fun `auth network final action and stop have explicit safe transitions`() {
         val analyzing = recognized().copy(screenFingerprint = "screen-1")
 
@@ -182,7 +234,7 @@ class ScenarioReducerTest {
     }
 
     @Test
-    fun `only changed manual scrolls count and the third produces recoverable failure`() {
+    fun `only changed manual scrolls count and the third is analyzed before recoverable failure`() {
         var transition = reduce(
             recognized().copy(screenFingerprint = "screen-1"),
             ScenarioEvent.TargetNotFound,
@@ -203,7 +255,12 @@ class ScenarioReducerTest {
             assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, transition.session.phase)
         }
 
-        val exhausted = reduce(transition.session, ScenarioEvent.ScreenObserved("screen-4"), 106)
+        val thirdChanged = reduce(transition.session, ScenarioEvent.ScreenObserved("screen-4"), 106)
+        assertEquals(ScenarioPhase.ANALYZING_SCREEN, thirdChanged.session.phase)
+        assertEquals(3, thirdChanged.session.scrollAttempts)
+        assertTrue(thirdChanged.effects.contains(ScenarioEffect.AnalyzeCurrentScreen))
+
+        val exhausted = reduce(thirdChanged.session, ScenarioEvent.TargetNotFound, 107)
         assertEquals(ScenarioPhase.FAILED, exhausted.session.phase)
         assertEquals(3, exhausted.session.scrollAttempts)
         val failure = exhausted.effects.filterIsInstance<ScenarioEffect.ShowRecoverableFailure>().single()
@@ -211,6 +268,33 @@ class ScenarioReducerTest {
         assertEquals(
             listOf(ScenarioChoice.REPHRASE, ScenarioChoice.RESTART, ScenarioChoice.STOP),
             failure.choices,
+        )
+    }
+
+    @Test
+    fun `TTS failure can retry the last instruction or continue with visual guidance`() {
+        val guiding = guiding()
+
+        val failed = reduce(guiding, ScenarioEvent.TtsFailed, 108)
+        assertEquals(ScenarioPhase.GUIDING_STEP, failed.session.phase)
+        assertEquals(ScenarioNotice.TTS_UNAVAILABLE, decision(failed).notice)
+
+        val retried = reduce(failed.session, ScenarioEvent.RetryRequested, 109)
+        assertEquals(ScenarioPhase.GUIDING_STEP, retried.session.phase)
+        assertEquals(
+            guiding.lastSafeInstruction,
+            retried.effects.filterIsInstance<ScenarioEffect.SpeakText>().single().text,
+        )
+        assertEquals(
+            guiding.currentGuidance,
+            retried.effects.filterIsInstance<ScenarioEffect.ShowGuidance>().single().guidance,
+        )
+
+        val continued = reduce(failed.session, ScenarioEvent.ContinueRequested, 110)
+        assertEquals(ScenarioPhase.GUIDING_STEP, continued.session.phase)
+        assertEquals(
+            guiding.currentGuidance,
+            continued.effects.filterIsInstance<ScenarioEffect.ShowGuidance>().single().guidance,
         )
     }
 

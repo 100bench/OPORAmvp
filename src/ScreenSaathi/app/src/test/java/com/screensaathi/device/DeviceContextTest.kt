@@ -2,6 +2,7 @@ package com.screensaathi.device
 
 import com.screensaathi.session.SafetyGuard
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -13,6 +14,60 @@ import org.junit.Test
  * them is ever safe to say out loud.
  */
 class DeviceContextTest {
+
+    @Test
+    fun `goal resolves one exact installed app mention without guessing short substrings`() {
+        val context = DeviceContext(
+            apps = listOf(
+                DeviceApp("Яндекс Go", "ru.yandex.taxi", launchable = true),
+                DeviceApp("Go", "example.go", launchable = true),
+                DeviceApp("Вкусно — и точка", "ru.vkusno", launchable = true),
+            ),
+            visiblePackages = emptySet(),
+            evidenceSource = Evidence.PACKAGE_MANAGER,
+            timestampMs = 1L,
+        )
+
+        assertEquals(
+            "ru.yandex.taxi",
+            context.findUniquelyMentionedLaunchableApp(
+                "Открой Яндекс Go и помоги заказать такси",
+            )?.packageName,
+        )
+        assertNull(context.findUniquelyMentionedLaunchableApp("Я хочу заказать еду"))
+        assertNull(context.findUniquelyMentionedLaunchableApp("Открой Go"))
+        assertNull(
+            context.findUniquelyMentionedLaunchableApp(
+                "Сравни Яндекс Go и Вкусно и точка",
+            ),
+        )
+    }
+
+    @Test
+    fun `short legitimate and nested exact app labels resolve without inventing ambiguity`() {
+        val context = DeviceContext(
+            apps = listOf(
+                DeviceApp("Ola", "com.olacabs.customer", launchable = true),
+                DeviceApp("Uber", "com.ubercab", launchable = true),
+                DeviceApp("Uber Eats", "com.ubercab.eats", launchable = true),
+            ),
+            visiblePackages = emptySet(),
+            evidenceSource = Evidence.PACKAGE_MANAGER,
+            timestampMs = 1L,
+        )
+
+        assertEquals(
+            "com.olacabs.customer",
+            context.findUniquelyMentionedLaunchableApp("Открой Ola")?.packageName,
+        )
+        assertEquals(
+            "com.ubercab.eats",
+            context.findUniquelyMentionedLaunchableApp("Открой Uber Eats")?.packageName,
+        )
+        assertNull(
+            context.findUniquelyMentionedLaunchableApp("Сравни Uber и Uber Eats"),
+        )
+    }
 
     private val whatsapp = DeviceApp("WhatsApp", "com.whatsapp", launchable = true)
     private val uber = DeviceApp("Uber", "com.ubercab", launchable = true)

@@ -105,6 +105,32 @@ class SessionController(
     private val tts = SarvamTts()
     private val player = AudioPlayer(context)
 
+    /** The app-agnostic reducer/planner loop used by all new text and voice goals. */
+    private val universalLoop: UniversalGuidanceLoop by lazy {
+        UniversalGuidanceLoop(
+            planner = planner,
+            snapshotProvider = { ScreenReaderService.instance?.snapshot() ?: ScreenSnapshot.EMPTY },
+            clock = SystemClock::elapsedRealtime,
+            emit = ::handleUniversalEmission,
+            appLabelProvider = { packageName ->
+                val packageManager = context.packageManager
+                runCatching {
+                    packageManager.getApplicationLabel(
+                        packageManager.getApplicationInfo(packageName, 0),
+                    ).toString().trim().takeIf(String::isNotEmpty)
+                }.getOrNull()
+            },
+        )
+    }
+
+    @Volatile private var universalActive = false
+    @Volatile private var universalTurn = -1
+    @Volatile private var pendingScenarioPrimary: ScenarioChoice? = null
+    @Volatile private var pendingScenarioSecondary: ScenarioChoice? = null
+    @Volatile private var pendingScenarioChoices: List<ScenarioChoice> = emptyList()
+    @Volatile private var pendingTargetAppPackage: String? = null
+    private val screenObservationId = AtomicInteger(0)
+
     @Volatile private var isRecording = false
 
     /**
@@ -195,6 +221,7 @@ class SessionController(
     fun onTextSubmitted(text: String) {
         if (text.isBlank()) return
         val turn = newTurn()
+        stopUniversalForReplacement(turn)
         abandonRecording(turn)
         player.stop()
         stopped = false
@@ -210,12 +237,31 @@ class SessionController(
         bg.post {
             if (!isCurrent(turn)) return@post
             if (!maybeProposeAllowedAction(text, turn)) {
-                processOpenEndedNext(turn, text, ScreenReaderService.instance?.snapshot())
+                startUniversalGoal(turn, text.trim(), ambiguous = false)
             }
         }
     }
 
     fun onDecisionTapped(choice: DecisionChoice) {
+        val scenarioChoice = if (choice == DecisionChoice.PRIMARY) {
+            pendingScenarioPrimary
+        } else {
+            pendingScenarioSecondary
+        }
+        if (scenarioChoice != null) {
+            val targetPackage = pendingTargetAppPackage
+            stopped = false
+            player.stop()
+            clearScenarioDecisions()
+            val turn = universalTurn
+            bg.post {
+                if (universalActive && isCurrent(turn)) {
+                    handleScenarioChoice(scenarioChoice, targetPackage)
+                }
+            }
+            return
+        }
+
         val pending = pendingAction ?: return
         val turn = newTurn()
         pendingAction = null // consume before doing anything: decisions are one-shot
@@ -239,8 +285,39 @@ class SessionController(
     }
 
     fun onNextTapped() {
-        // Opening a turn here invalidates any plan still in flight, so a slow
-        // planner response cannot yank the user back a step after they advance.
+        // The universal flow advances from physical screen changes, never from
+        // this legacy Next button. Crucially, do not open a new controller turn
+        // here: an in-flight universal response belongs to universalTurn and
+        // must not be allowed to render under a newly assigned turn number.
+        if (universalActive) {
+            val turn = universalTurn
+            val session = universalLoop.session
+            val message = when (session.phase) {
+                ScenarioPhase.WAITING_FOR_MANUAL_SCROLL ->
+                    "Прокрутите экран вручную — я продолжу после его изменения."
+                ScenarioPhase.GUIDING_STEP ->
+                    session.lastSafeInstruction
+                        ?: "Нажмите выделенный элемент на экране или остановите сценарий."
+                else -> null
+            }
+            if (message != null) {
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.GUIDING,
+                        expanded = true,
+                        instruction = message,
+                        language = lastLanguage,
+                        highlight = currentHighlight,
+                        choices = currentChoices,
+                        decisionButtons = currentDecisionButtons,
+                    ),
+                )
+            }
+            return
+        }
+
+        // Legacy flows do advance from Next, so invalidate their pending work.
         val turn = newTurn()
         pendingAction = null
         currentDecisionButtons = null
@@ -277,6 +354,12 @@ class SessionController(
      */
     fun onStopTapped() {
         val turn = newTurn()
+        if (universalActive) {
+            universalTurn = turn
+            universalLoop.stop()
+            universalActive = false
+            clearScenarioDecisions()
+        }
         abandonRecording(turn)
         stopped = true
         pendingAction = null
@@ -305,6 +388,348 @@ class SessionController(
     /** True once the user has stopped and before they resume. */
     val isStopped: Boolean get() = stopped
 
+    private fun startUniversalGoal(turn: Int, goal: String, ambiguous: Boolean) {
+        if (!isCurrent(turn)) return
+        universalActive = true
+        universalTurn = turn
+        engine = null
+        currentHighlight = null
+        lastHighlightQuery = null
+        lastHighlightScreenSig = ""
+        awaitingResettle = false
+        invalidationTurn = -1
+        clearHighlightInstant()
+        currentChoices = emptyList()
+        clearScenarioDecisions()
+        lastUserRequest = goal
+        renderIfCurrent(
+            turn,
+            OverlayCommand(
+                PillState.THINKING,
+                expanded = true,
+                instruction = "Проверяю текущий экран…",
+                language = lastLanguage,
+                highlight = null,
+            ),
+        )
+        val targetPackage = DeviceContextProvider.snapshot(context)
+            .findUniquelyMentionedLaunchableApp(goal)
+            ?.packageName
+        universalLoop.startGoal(goal, targetPackage = targetPackage, ambiguous = ambiguous)
+    }
+
+    private fun handleUniversalEmission(emission: UniversalGuidanceEmission) {
+        val turn = universalTurn
+        if (!universalActive || !isCurrent(turn)) return
+        when (val effect = emission.effect) {
+            ScenarioEffect.BeginRecognition -> startListening(replacingUniversal = false)
+            ScenarioEffect.AnalyzeCurrentScreen,
+            is ScenarioEffect.RetryPlanning,
+            ScenarioEffect.SaveResumeCapsule,
+            ScenarioEffect.DeleteResumeCapsule,
+            -> Unit
+
+            ScenarioEffect.ClearHighlight -> {
+                currentHighlight = null
+                clearHighlightInstant()
+            }
+
+            ScenarioEffect.CancelPendingWork -> {
+                player.stop()
+                screenObservationId.incrementAndGet()
+            }
+
+            ScenarioEffect.StopSpeech -> player.stop()
+
+            ScenarioEffect.ShowIdle -> renderIfCurrent(
+                turn,
+                OverlayCommand(
+                    PillState.IDLE,
+                    expanded = true,
+                    instruction = Phrases.get(Phrases.Key.STOPPED, lastLanguage).text,
+                    language = lastLanguage,
+                    highlight = null,
+                ),
+            )
+
+            ScenarioEffect.FinishScenario -> {
+                clearScenarioDecisions()
+                universalActive = false
+            }
+
+            ScenarioEffect.RequestManualScroll -> {
+                currentHighlight = null
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.GUIDING,
+                        expanded = true,
+                        instruction = "Цель пока не видна. Прокрутите экран вручную — я проверю следующий видимый участок.",
+                        language = lastLanguage,
+                        highlight = null,
+                    ),
+                )
+            }
+
+            is ScenarioEffect.ConfirmGoal -> {
+                // The target app may have become visible because the user
+                // opened it manually. From here START confirms guidance, not
+                // the now-stale launch card.
+                pendingTargetAppPackage = null
+                pendingScenarioPrimary = ScenarioChoice.START
+                pendingScenarioSecondary = ScenarioChoice.CANCEL
+                currentDecisionButtons = DecisionButtons.START_OR_CANCEL
+                currentChoices = emptyList()
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.GUIDING,
+                        expanded = true,
+                        instruction = "Цель: «${effect.goal}». Начать пошаговую помощь?",
+                        language = lastLanguage,
+                        highlight = null,
+                        decisionButtons = currentDecisionButtons,
+                    ),
+                )
+            }
+
+            is ScenarioEffect.ShowAnswer -> {
+                currentHighlight = null
+                currentChoices = emptyList()
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.IDLE,
+                        expanded = true,
+                        instruction = effect.instruction,
+                        language = lastLanguage,
+                        highlight = null,
+                    ),
+                )
+            }
+
+            is ScenarioEffect.ShowGuidance -> {
+                val target = emission.resolvedTarget
+                if (target == null) {
+                    renderIfCurrent(
+                        turn,
+                        OverlayCommand(
+                            PillState.ERROR,
+                            expanded = true,
+                            instruction = "Не удалось надёжно найти элемент. Прокрутите экран вручную.",
+                            language = lastLanguage,
+                            highlight = null,
+                        ),
+                    )
+                    return
+                }
+                currentDecisionButtons = null
+                currentChoices = emptyList()
+                currentHighlight = HighlightBounds(
+                    target.left,
+                    target.top,
+                    target.right,
+                    target.bottom,
+                    "rect",
+                    true,
+                )
+                val instruction = effect.guidance.instruction
+                val numbered = if (instruction.trimStart().startsWith("Шаг ", ignoreCase = true)) {
+                    instruction
+                } else {
+                    "Шаг ${universalLoop.session.stepNumber}. $instruction"
+                }
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.GUIDING,
+                        expanded = true,
+                        instruction = numbered,
+                        language = lastLanguage,
+                        highlight = currentHighlight,
+                    ),
+                )
+            }
+
+            is ScenarioEffect.SpeakText -> speech.post {
+                speak(Spoken(effect.text, lastLanguage), turn)
+            }
+
+            is ScenarioEffect.ShowDecision -> showScenarioDecision(turn, effect)
+
+            is ScenarioEffect.ShowTargetAppChoice -> {
+                val app = DeviceContextProvider.snapshot(context).apps
+                    .singleOrNull { it.packageName == effect.packageName && it.enabled && it.launchable }
+                if (app == null) {
+                    showLocalMessage(turn, "Не удалось проверить выбранное приложение на этом устройстве.", PillState.ERROR)
+                    return
+                }
+                pendingTargetAppPackage = app.packageName
+                pendingScenarioPrimary = ScenarioChoice.START
+                pendingScenarioSecondary = ScenarioChoice.CANCEL
+                currentDecisionButtons = DecisionButtons("Открыть ${app.label}", "Отмена")
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.GUIDING,
+                        expanded = true,
+                        instruction = "Открыть приложение ${app.label}?",
+                        language = lastLanguage,
+                        highlight = null,
+                        decisionButtons = currentDecisionButtons,
+                    ),
+                )
+            }
+
+            is ScenarioEffect.LaunchTargetApp -> {
+                if (!AppLauncher.launchPackage(context, effect.packageName)) {
+                    showLocalMessage(turn, "Не удалось открыть выбранное приложение.", PillState.ERROR)
+                } else {
+                    renderIfCurrent(
+                        turn,
+                        OverlayCommand(
+                            PillState.THINKING,
+                            expanded = true,
+                            instruction = "Жду, пока приложение откроется…",
+                            language = lastLanguage,
+                            highlight = null,
+                        ),
+                    )
+                }
+            }
+
+            is ScenarioEffect.ShowSafeHandoff -> {
+                currentHighlight = null
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.IDLE,
+                        expanded = true,
+                        instruction = "Дальше требуется ваше личное подтверждение. Проверьте данные и продолжите самостоятельно.",
+                        language = lastLanguage,
+                        highlight = null,
+                    ),
+                )
+            }
+
+            is ScenarioEffect.ShowRecoverableFailure -> showRecoverableFailure(turn, effect)
+        }
+    }
+
+    private fun showScenarioDecision(turn: Int, effect: ScenarioEffect.ShowDecision) {
+        val (message, buttons) = when (effect.notice) {
+            ScenarioNotice.VERIFY_RECOGNITION -> {
+                val heard = effect.recognizedGoal?.takeIf(String::isNotBlank)
+                    ?.let { "Я услышал: «$it». Всё верно?" }
+                    ?: "Не удалось уверенно разобрать цель. Повторить?"
+                heard to if (effect.choices.firstOrNull() == ScenarioChoice.REPEAT_RECOGNITION) {
+                    DecisionButtons.RETRY_OR_STOP
+                } else {
+                    DecisionButtons.VERIFY_OR_REPEAT
+                }
+            }
+            ScenarioNotice.AUTHENTICATION ->
+                "Введите пароль, код или биометрию самостоятельно, затем нажмите «Продолжить»." to
+                    DecisionButtons.CONTINUE_OR_STOP
+            ScenarioNotice.NO_NETWORK ->
+                "Нет связи с AI. Проверьте VPN и подключение, затем повторите." to
+                    DecisionButtons.RETRY_OR_STOP
+            ScenarioNotice.TTS_UNAVAILABLE ->
+                "Не удалось озвучить подсказку. Текст остаётся на экране." to
+                    DecisionButtons("Повторить", "Продолжить")
+            ScenarioNotice.SAFE_HANDOFF ->
+                "Дальше требуется ваше личное подтверждение." to DecisionButtons.CONTINUE_OR_STOP
+        }
+        pendingScenarioPrimary = effect.choices.getOrNull(0)
+        pendingScenarioSecondary = effect.choices.getOrNull(1)
+        currentDecisionButtons = buttons
+        renderIfCurrent(
+            turn,
+            OverlayCommand(
+                PillState.GUIDING,
+                expanded = true,
+                instruction = message,
+                language = lastLanguage,
+                highlight = if (effect.notice == ScenarioNotice.TTS_UNAVAILABLE) {
+                    currentHighlight
+                } else {
+                    null
+                },
+                decisionButtons = buttons,
+            ),
+        )
+    }
+
+    private fun showRecoverableFailure(
+        turn: Int,
+        effect: ScenarioEffect.ShowRecoverableFailure,
+    ) {
+        pendingScenarioChoices = effect.choices
+        val labels = effect.choices.map(::scenarioChoiceLabel)
+        currentChoices = labels
+        currentDecisionButtons = null
+        val message = when (effect.reason) {
+            ScenarioFailureReason.SCROLL_LIMIT ->
+                "После трёх прокруток цель не найдена. Можно переформулировать просьбу, начать заново или остановиться."
+            ScenarioFailureReason.INVALID_PLANNER_RESPONSE -> "AI дважды вернул неподходящий формат."
+            ScenarioFailureReason.REMOTE_PLANNER_FAILURE -> "Сервис AI временно не ответил."
+            ScenarioFailureReason.CONFIGURATION -> "Не настроено подключение к AI."
+        }
+        renderIfCurrent(
+            turn,
+            OverlayCommand(
+                PillState.ERROR,
+                expanded = true,
+                instruction = message,
+                language = lastLanguage,
+                highlight = null,
+                choices = labels,
+            ),
+        )
+    }
+
+    private fun handleScenarioChoice(choice: ScenarioChoice, targetPackage: String? = null) {
+        when (choice) {
+            ScenarioChoice.CONFIRM_RECOGNITION -> universalLoop.confirmRecognition()
+            ScenarioChoice.REPEAT_RECOGNITION -> universalLoop.repeatRecognition()
+            ScenarioChoice.START -> if (targetPackage != null) {
+                universalLoop.selectTargetApp(targetPackage)
+            } else {
+                universalLoop.confirmGoal()
+            }
+            ScenarioChoice.CANCEL,
+            ScenarioChoice.STOP,
+            -> {
+                universalLoop.stop()
+                universalActive = false
+            }
+            ScenarioChoice.CONTINUE -> universalLoop.continueAfterAuth()
+            ScenarioChoice.RETRY -> universalLoop.retry()
+            ScenarioChoice.REPHRASE -> universalLoop.rephrase()
+            ScenarioChoice.RESTART -> universalLoop.restart()
+        }
+    }
+
+    private fun clearScenarioDecisions() {
+        pendingScenarioPrimary = null
+        pendingScenarioSecondary = null
+        pendingScenarioChoices = emptyList()
+        pendingTargetAppPackage = null
+        currentDecisionButtons = null
+    }
+
+    private fun scenarioChoiceLabel(choice: ScenarioChoice): String = when (choice) {
+        ScenarioChoice.REPHRASE -> "Переформулировать"
+        ScenarioChoice.RESTART -> "Начать заново"
+        ScenarioChoice.STOP -> "Остановить"
+        ScenarioChoice.RETRY -> "Повторить"
+        ScenarioChoice.CONTINUE -> "Продолжить"
+        ScenarioChoice.START -> "Начать"
+        ScenarioChoice.CANCEL -> "Отмена"
+        ScenarioChoice.CONFIRM_RECOGNITION -> "Верно"
+        ScenarioChoice.REPEAT_RECOGNITION -> "Повторить"
+    }
+
     /**
      * Run a task by id with no speech involved.
      *
@@ -316,6 +741,7 @@ class SessionController(
      */
     fun startTaskById(taskId: String, language: String = lastLanguage) {
         val turn = newTurn()
+        stopUniversalForReplacement(turn)
         abandonRecording(turn)
         stopped = false
         chosenPackage = ""
@@ -339,10 +765,23 @@ class SessionController(
         capture.post { recorder.stop(); purgeStaleCaptures(turn) }
     }
 
+    private fun stopUniversalForReplacement(turn: Int) {
+        if (!universalActive) return
+        universalTurn = turn
+        universalLoop.stop()
+        universalActive = false
+        clearScenarioDecisions()
+    }
+
     // --- Voice loop -----------------------------------------------------------
 
-    private fun startListening() {
+    private fun startListening(replacingUniversal: Boolean = true) {
         val turn = newTurn()
+        if (replacingUniversal) {
+            stopUniversalForReplacement(turn)
+        } else {
+            universalTurn = turn
+        }
         stopped = false
         pendingAction = null
         currentDecisionButtons = null
@@ -352,12 +791,18 @@ class SessionController(
         // never told why the voice loop does nothing. Say it, then keep guiding.
         if (!hasMicPermission()) {
             publishDebug(turn) { it.copy(note = "RECORD_AUDIO denied") }
-            showLocalMessage(turn, "Разрешите микрофон или напишите просьбу текстом.", PillState.ERROR)
+            val message = "Разрешите микрофон или напишите просьбу текстом."
+            if (!restoreRepeatRecognitionDecision(turn, message)) {
+                showLocalMessage(turn, message, PillState.ERROR)
+            }
             return
         }
         if (!Sarvam.isConfigured()) {
             publishDebug(turn) { it.copy(note = "no AI gateway — voice unavailable") }
-            showLocalMessage(turn, "Голос сейчас недоступен. Напишите просьбу текстом.", PillState.ERROR)
+            val message = "Голос сейчас недоступен. Напишите просьбу текстом."
+            if (!restoreRepeatRecognitionDecision(turn, message)) {
+                showLocalMessage(turn, message, PillState.ERROR)
+            }
             return
         }
         // Flip the pill first: the user must see "Listening…" the instant they
@@ -373,7 +818,10 @@ class SessionController(
             purgeStaleCaptures(turn)
             if (recorder.start(inputFileFor(turn))) return@post
             isRecording = false
-            showLocalMessage(turn, "Не удалось включить микрофон. Попробуйте текстовый ввод.", PillState.ERROR)
+            val message = "Не удалось включить микрофон. Попробуйте текстовый ввод."
+            if (!restoreRepeatRecognitionDecision(turn, message)) {
+                showLocalMessage(turn, message, PillState.ERROR)
+            }
         }
 
         // Close the turn on our own clock as well as on a second tap.
@@ -418,7 +866,13 @@ class SessionController(
         if (heldMs < MIN_SPEECH_MS) {
             publishDebug(turn) { it.copy(note = "too short (${heldMs}ms) — no STT call") }
             wav.delete()
-            fallbackAfterFailedSpeech(turn, Phrases.Key.HOLD_LONGER)
+            if (!restoreRepeatRecognitionDecision(
+                    turn,
+                    Phrases.get(Phrases.Key.HOLD_LONGER, lastLanguage).text,
+                )
+            ) {
+                fallbackAfterFailedSpeech(turn, Phrases.Key.HOLD_LONGER)
+            }
             return
         }
 
@@ -432,9 +886,15 @@ class SessionController(
 
         if (!isCurrent(turn)) return
 
-        if (sttResult == null || sttResult.transcript.isBlank()) {
+        if (sttResult == null) {
             publishDebug(turn) { it.copy(sttMs = sttMs, note = "STT returned nothing") }
-            fallbackAfterFailedSpeech(turn, Phrases.Key.DIDNT_CATCH)
+            if (!restoreRepeatRecognitionDecision(
+                    turn,
+                    Phrases.get(Phrases.Key.DIDNT_CATCH, lastLanguage).text,
+                )
+            ) {
+                fallbackAfterFailedSpeech(turn, Phrases.Key.DIDNT_CATCH)
+            }
             return
         }
         // Everything the assistant says from here on is chosen for this.
@@ -450,6 +910,29 @@ class SessionController(
         userSelectedPackage = ""
         publishDebug(turn) {
             it.copy(heard = sttResult.transcript, sttMs = sttMs, language = lastLanguage)
+        }
+
+        // RepeatRecognition deliberately keeps the universal session alive
+        // while the microphone records. Once a replacement transcript exists,
+        // retire that recognizing generation silently before routing the new
+        // request; special local actions must not leave a hidden universal
+        // session intercepting Next/Stop behind their confirmation UI.
+        if (
+            universalActive &&
+            universalTurn == turn &&
+            universalLoop.session.phase == ScenarioPhase.RECOGNIZING_GOAL
+        ) {
+            universalActive = false
+            universalLoop.stop()
+            clearScenarioDecisions()
+        }
+
+        // Low confidence is useful only when the provider actually supplies
+        // it. Missing confidence is not treated as low. Empty/very short text
+        // is deterministically ambiguous and cannot authorize any local action.
+        if (SarvamStt.isAmbiguous(sttResult)) {
+            startUniversalGoal(turn, sttResult.transcript.trim(), ambiguous = true)
+            return
         }
 
         if (maybeProposeAllowedAction(sttResult.transcript, turn)) return
@@ -480,77 +963,9 @@ class SessionController(
             return
         }
 
-        val task = pickTask(sttResult.transcript)
-        // Clear offeredApps if we are starting/continuing a task to prevent stale state
+        // Clear offeredApps so a previous app choice cannot trap a new goal.
         offeredApps = emptyList()
-
-        val snap = ScreenReaderService.instance?.snapshot() ?: ScreenSnapshot.EMPTY
-        if (task.id == "open_ended") {
-            processOpenEndedNext(turn, task.title, snap)
-            return
-        }
-
-        val e = engine?.takeIf { it.task.id == task.id } ?: StepEngine(task).also { engine = it }
-
-        val tp0 = SystemClock.uptimeMillis()
-        val plan = planner.plan(
-            transcript = sttResult.transcript,
-            task = task,
-            screen = snap,
-            spokenLanguage = lastLanguage,
-            currentStepId = e.currentStep.id,
-        )
-        val planMs = SystemClock.uptimeMillis() - tp0
-
-        if (!isCurrent(turn)) return
-
-        // Two refusals the confidence floor cannot make on its own. Evaluated
-        // before jumpTo() so a blocked plan never moves the user.
-        // See docs/evals/FAILURES.md GAP-1, GAP-2.
-        val blockedReason: String? = plan?.let { p ->
-            when {
-                SafetyGuard.blocksIrreversibleJump(task, p.step) { rid ->
-                    snap.elementForResourceId(rid)?.text
-                } -> "blocked: irreversible step with earlier fields still blank"
-
-                SafetyGuard.blocksUngroundedPlan(
-                    elementCount = snap.elements.size,
-                    targetResolves = snap.boundsForResourceId(p.targetResourceId) != null ||
-                        snap.boundsForText(task.stepById(p.step)?.textAny ?: emptyList()) != null,
-                ) -> "blocked: screen shows no evidence for this plan"
-
-                else -> null
-            }
-        }
-
-        if (plan != null && blockedReason == null &&
-            plan.confidence >= CONFIDENCE_FLOOR && e.jumpTo(plan.step)
-        ) {
-            publishDebug(turn) {
-                it.copy(
-                    intent = plan.intent, step = plan.step,
-                    wantResourceId = plan.targetResourceId,
-                    planMs = planMs, confidence = plan.confidence,
-                    language = plan.language,
-                )
-            }
-            presentStep(e, plan.spoken, turn, speak = true)
-        } else {
-            // Planner unsure or unavailable — deterministic order wins.
-            publishDebug(turn) {
-                it.copy(
-                    intent = task.id, step = e.currentStep.id,
-                    wantResourceId = e.currentStep.resourceId,
-                    planMs = planMs, confidence = plan?.confidence ?: -1.0,
-                    note = when {
-                        plan == null -> "planner unavailable"
-                        blockedReason != null -> blockedReason
-                        else -> "below confidence floor"
-                    },
-                )
-            }
-            presentCurrentStep(e, turn, speak = true)
-        }
+        startUniversalGoal(turn, sttResult.transcript.trim(), ambiguous = false)
     }
 
     /**
@@ -564,6 +979,31 @@ class SessionController(
         renderIfCurrent(turn, OverlayCommand(PillState.ERROR, expanded = true,
             instruction = phrase.text, language = phrase.language, highlight = null))
         speech.post { speak(phrase, turn) }
+    }
+
+    /** Keep RepeatRecognition failures actionable instead of hiding the session behind an error. */
+    private fun restoreRepeatRecognitionDecision(turn: Int, message: String): Boolean {
+        if (
+            !universalActive ||
+            universalTurn != turn ||
+            !isCurrent(turn) ||
+            universalLoop.session.phase != ScenarioPhase.RECOGNIZING_GOAL
+        ) {
+            return false
+        }
+        universalLoop.recognitionFailed()
+        renderIfCurrent(
+            turn,
+            OverlayCommand(
+                PillState.ERROR,
+                expanded = true,
+                instruction = message,
+                language = lastLanguage,
+                highlight = null,
+                decisionButtons = DecisionButtons.RETRY_OR_STOP,
+            ),
+        )
+        return true
     }
 
     private fun processOpenEndedNext(
@@ -1298,11 +1738,26 @@ class SessionController(
      *  - RESOLVE still waits for `settled`, so the next target is read off a
      *    finished layout rather than a half-drawn one.
      *
-     * Runs on [bg] — same thread as the poll loop it invalidates — so there
-     * is no race between reading currentHighlight here and the loop's own
-     * writes to it.
+     * Universal guidance clears synchronously because [bg] may be waiting on
+     * the provider. The older polling path below still runs on [bg], the same
+     * thread as the poll loop it invalidates.
      */
     fun onWindowStateChanged() {
+        scheduleUniversalScreenObservation()
+
+        // Universal planning can be blocked on a network call on [bg]. Clear a
+        // ring synchronously from the accessibility callback as soon as a
+        // different readable tree is visible; the later debounced observation
+        // still owns replanning.
+        if (universalActive && currentHighlight != null) {
+            val observed = ScreenReaderService.instance?.snapshot()?.signature().orEmpty()
+            val expected = universalLoop.session.screenFingerprint.orEmpty()
+            if (shouldClearGuidanceHighlight(expected, observed)) {
+                currentHighlight = null
+                clearHighlightInstant()
+            }
+        }
+
         bg.post {
             if (stopped) return@post
             val query = lastHighlightQuery ?: return@post
@@ -1332,6 +1787,21 @@ class SessionController(
         }
     }
 
+    /** Debounced bridge from accessibility tree changes into the pure reducer loop. */
+    fun onScreenContentChanged() {
+        scheduleUniversalScreenObservation()
+    }
+
+    private fun scheduleUniversalScreenObservation() {
+        if (!universalActive) return
+        val observation = screenObservationId.incrementAndGet()
+        bg.postDelayed({
+            if (!universalActive || observation != screenObservationId.get()) return@postDelayed
+            val snapshot = ScreenReaderService.instance?.snapshot() ?: return@postDelayed
+            if (snapshot.settled) universalLoop.observeScreen(snapshot)
+        }, UNIVERSAL_SCREEN_DEBOUNCE_MS)
+    }
+
     /**
      * The user physically tapped something. That is the signal to advance —
      * not a timer, and not an action we performed on their behalf.
@@ -1343,8 +1813,42 @@ class SessionController(
         if (now - lastUserClickAt < USER_CLICK_DEBOUNCE_MS) return
         lastUserClickAt = now
 
-        val liveEngine = engine
         val highlight = currentHighlight
+        if (
+            universalActive &&
+            universalLoop.session.phase == ScenarioPhase.GUIDING_STEP &&
+            highlight != null
+        ) {
+            if (clickedBounds != null && !Rect.intersects(
+                    clickedBounds,
+                    Rect(highlight.left, highlight.top, highlight.right, highlight.bottom),
+                )
+            ) {
+                Log.d(TAG, "UNIVERSAL_CLICK ignored: outside highlighted target $clickedBounds")
+                return
+            }
+            val previousFingerprint = universalLoop.session.screenFingerprint.orEmpty()
+            val turn = newTurn()
+            universalTurn = turn
+            currentHighlight = null
+            player.stop()
+            clearHighlightInstant()
+            universalLoop.targetTapped()
+            renderIfCurrent(
+                turn,
+                OverlayCommand(
+                    PillState.THINKING,
+                    expanded = false,
+                    instruction = "Смотрю следующий экран…",
+                    language = lastLanguage,
+                    highlight = null,
+                ),
+            )
+            bg.post { continueUniversalAfterTap(turn, previousFingerprint) }
+            return
+        }
+
+        val liveEngine = engine
         if (liveEngine != null && highlight != null) {
             if (clickedBounds != null && !Rect.intersects(
                     clickedBounds,
@@ -1444,12 +1948,47 @@ class SessionController(
         processOpenEndedNext(turn, goal, snapshot, completedStep)
     }
 
+    /** Waits for a settled post-tap tree; ordinary duplicate events stay reducer-idempotent. */
+    private fun continueUniversalAfterTap(turn: Int, previousFingerprint: String) {
+        val startedAt = SystemClock.uptimeMillis()
+        val deadline = startedAt + NEXT_SCREEN_WAIT_MS
+        var snapshot: ScreenSnapshot? = null
+        while (isCurrent(turn) && universalActive && SystemClock.uptimeMillis() < deadline) {
+            snapshot = ScreenReaderService.instance?.snapshot()
+            val fingerprint = snapshot?.signature().orEmpty()
+            val changed = fingerprint.isNotBlank() && fingerprint != previousFingerprint
+            val sameScreenGraceElapsed =
+                SystemClock.uptimeMillis() - startedAt >= SAME_SCREEN_REPLAN_DELAY_MS
+            if (snapshot?.settled == true && (changed || sameScreenGraceElapsed)) break
+            try {
+                Thread.sleep(NEXT_SCREEN_POLL_INTERVAL_MS)
+            } catch (_: InterruptedException) {
+                return
+            }
+        }
+        if (!isCurrent(turn) || !universalActive) return
+        val observed = snapshot ?: ScreenSnapshot.EMPTY
+        if (!observed.settled) {
+            universalLoop.physicalTapTimedOut()
+            return
+        }
+        if (observed.signature().isNotBlank() && observed.signature() != previousFingerprint) {
+            universalLoop.observeScreen(observed)
+        } else {
+            universalLoop.physicalTapSettled(observed)
+        }
+    }
+
     @Volatile private var lastUserClickAt: Long = 0L
 
     /** Runs on [speech]. Never on the thread that resolves the highlight. */
     private fun speak(spoken: Spoken, turn: Int) {
         if (!Sarvam.isConfigured()) return
-        val bytes = tts.synthesize(spoken) ?: return
+        val bytes = tts.synthesize(spoken)
+        if (bytes == null) {
+            if (universalActive && isCurrent(turn)) universalLoop.ttsFailed()
+            return
+        }
         if (!isCurrent(turn) || stopped) return
         // Carry currentHighlight through both renders — the ring must survive
         // the speaking state, not blink out while the instruction is read.
@@ -1526,6 +2065,21 @@ class SessionController(
      * step is pinned to that package so the ring waits for the app to draw.
      */
     fun onChoiceTapped(index: Int) {
+        val scenarioChoice = pendingScenarioChoices.getOrNull(index)
+        if (scenarioChoice != null) {
+            stopped = false
+            player.stop()
+            clearScenarioDecisions()
+            currentChoices = emptyList()
+            val turn = universalTurn
+            bg.post {
+                if (universalActive && isCurrent(turn)) {
+                    handleScenarioChoice(scenarioChoice)
+                }
+            }
+            return
+        }
+
         val apps = offeredApps
         val app = apps.getOrNull(index) ?: return
         val turn = newTurn()
@@ -1705,6 +2259,10 @@ class SessionController(
     fun dispose() {
         turnId.incrementAndGet() // invalidate anything still in flight
         if (instance === this) instance = null
+        if (universalActive) {
+            universalActive = false
+            universalLoop.stop()
+        }
         player.stop()
         recorder.stop()
         worker.quitSafely()
@@ -1739,6 +2297,7 @@ class SessionController(
         /** A focus/keyboard change may keep the same signature; still continue. */
         private const val SAME_SCREEN_REPLAN_DELAY_MS = 1_000L
         private const val NEXT_SCREEN_POLL_INTERVAL_MS = 120L
+        private const val UNIVERSAL_SCREEN_DEBOUNCE_MS = 350L
 
         private const val MIN_SPEECH_MS = 400L
 

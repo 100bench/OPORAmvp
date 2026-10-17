@@ -16,7 +16,11 @@ import org.json.JSONObject
  */
 class SarvamStt {
 
-    data class Result(val transcript: String, val languageCode: String?) {
+    data class Result(
+        val transcript: String,
+        val languageCode: String?,
+        val confidence: Double? = null,
+    ) {
         /** Prefer Russian and also infer it from Cyrillic if metadata is absent. */
         val language: String
             get() = Language.reconcile(transcript, languageCode ?: Language.APP_DEFAULT)
@@ -54,22 +58,10 @@ class SarvamStt {
             Sarvam.http.newCall(req).execute().use { resp ->
                 val raw = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
-                    Log.w(TAG, "STT ${resp.code}: $raw")
+                    Log.w(TAG, "STT HTTP ${resp.code}")
                     return null
                 }
-                val json = JSONObject(raw)
-                val transcript = json.optString("text", "")
-                if (transcript.isBlank()) return null
-                // gpt-transcribe returns an ISO language code in `languages`.
-                // Accept legacy fields too, which also makes this parser
-                // tolerant of compatible gateways.
-                val detected = (
-                    json.optJSONArray("languages")?.optJSONObject(0)?.optString("code")
-                        ?: json.optString("language", json.optString("language_code"))
-                    )
-                    .takeIf { it.isNotBlank() }
-                    ?.let { Language.normalize(it) }
-                Result(transcript, detected)
+                parseResponse(raw)
             }
         } catch (e: Exception) {
             Log.w(TAG, "STT failed (${e.javaClass.simpleName}): ${e.message}", e)
@@ -77,5 +69,32 @@ class SarvamStt {
         }
     }
 
-    companion object { private const val TAG = "SarvamStt" }
+    companion object {
+        private const val TAG = "SarvamStt"
+        private const val MIN_CONFIDENCE = 0.60
+        private const val MIN_TRANSCRIPT_CHARS = 3
+
+        internal fun parseResponse(raw: String): Result? = runCatching {
+            val json = JSONObject(raw)
+            val transcript = json.optString("text", "")
+            // gpt-transcribe returns an ISO language code in `languages`.
+            // Accept legacy fields too, which also makes this parser tolerant
+            // of compatible gateways.
+            val detected = (
+                json.optJSONArray("languages")?.optJSONObject(0)?.optString("code")
+                    ?: json.optString("language", json.optString("language_code"))
+                )
+                .takeIf { it.isNotBlank() }
+                ?.let(Language::normalize)
+            val confidence = json.optDouble("confidence", Double.NaN)
+                .takeIf { it.isFinite() && it in 0.0..1.0 }
+            Result(transcript, detected, confidence)
+        }.getOrNull()
+
+        fun isAmbiguous(result: Result): Boolean {
+            val normalized = result.transcript.trim()
+            return normalized.length < MIN_TRANSCRIPT_CHARS ||
+                result.confidence?.let { it < MIN_CONFIDENCE } == true
+        }
+    }
 }

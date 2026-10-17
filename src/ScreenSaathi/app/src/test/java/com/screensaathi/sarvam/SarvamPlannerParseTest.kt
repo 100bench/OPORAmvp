@@ -179,6 +179,8 @@ class SarvamPlannerParseTest {
             "Подтвердить",
             "Купить",
             "Отправить заявление",
+            "Заказать такси",
+            "Заказать еду",
             "Place order",
             "Pay now",
             "Checkout",
@@ -233,6 +235,14 @@ class SarvamPlannerParseTest {
             """{"is_done":false,"action_type":"guide",
                 "target":{"resource_id":"primary_button","text":"Подать заявление"},
                 "instruction":"Выберите указанную кнопку","language":"ru-RU",
+                "confidence":0.9,"reason":"visible target"}""",
+            """{"is_done":false,"action_type":"guide",
+                "target":{"resource_id":"primary_button","text":"Заказать такси"},
+                "instruction":"Выберите указанную кнопку","language":"ru-RU",
+                "confidence":0.9,"reason":"visible target"}""",
+            """{"is_done":false,"action_type":"guide",
+                "target":{"resource_id":"primary_button"},
+                "instruction":"Нажмите «Заказать еду»","language":"ru-RU",
                 "confidence":0.9,"reason":"visible target"}""",
         )
 

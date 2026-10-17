@@ -13,6 +13,16 @@ import org.junit.Test
  */
 class OpenEndedGuardTest {
 
+    @Test
+    fun `universal planner contract contains no executable action`() {
+        assertTrue(SafetyGuard.isReadOnlyGuidanceAction("guide"))
+        assertTrue(SafetyGuard.isReadOnlyGuidanceAction("answer"))
+        assertTrue(!SafetyGuard.isReadOnlyGuidanceAction("click"))
+        assertTrue(!SafetyGuard.isReadOnlyGuidanceAction("type_text"))
+        assertTrue(!SafetyGuard.isReadOnlyGuidanceAction("launch_app"))
+        assertTrue(!SafetyGuard.isReadOnlyGuidanceAction("scroll"))
+    }
+
     private fun verdict(
         request: String,
         actionType: String,

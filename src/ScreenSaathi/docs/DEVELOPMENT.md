@@ -33,6 +33,38 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`
 3 tests are `replay_only` fixtures that skip without a live provider key — this
 is expected, not a failure.
 
+## Universal guidance loop
+
+Text and voice goals enter the same `UniversalGuidanceLoop`; text skips only
+STT. The loop is app-agnostic and sends the planner one sanitized UI-tree
+snapshot at a time. Its required order is:
+
+1. capture the raw accessibility snapshot locally;
+2. run `ScreenSafetyGate` on the raw tree and stop before network/TTS for auth,
+   banking, payment and final-action screens;
+3. sanitize into `PlannerScreen` (no coordinates or editable values);
+4. request one `guide` or `answer` from the planner;
+5. resolve a guide target against the same raw snapshot and keep its geometry
+   on-device;
+6. render one highlight and wait for the user's physical tap or scroll.
+
+The planner cannot click, type, scroll or launch an app. When the user's own
+goal contains one unambiguous full label from the locally discovered app list,
+the controller may offer that exact verified app card; launch is emitted only
+after the user selects the card. A changed UI-tree
+fingerprint causes replanning; duplicate events are ignored. After three
+changed manual-scroll views without a resolvable target, the UI offers
+rephrase, restart or stop instead of guessing.
+
+Focused regression command:
+
+```bash
+./gradlew testDebugUnitTest \
+  --tests 'com.screensaathi.session.UniversalGuidanceLoopTest' \
+  --tests 'com.screensaathi.session.*' \
+  --tests 'com.screensaathi.evals.LatencyProfileTest'
+```
+
 ## Install and run on a device
 
 **A physical Android device is required.** Accessibility services, overlay
@@ -92,6 +124,19 @@ Checked 2026-10-17 with APK commit `b49d85a` on serial `RF8MA183F5A`:
   and the physical playback both pass.
 - Voice/STT scenarios and the Stop control remain manual acceptance checks by
   agreement with the tester; do not mark them passed from this baseline.
+- On 2026-10-18 the Task 7 universal-loop APK was installed in place and the
+  accessibility service remained bound. The tester then manually exercised the
+  generic taxi-ordering guidance route and reported that the interaction works
+  as intended. This is scenario evidence only: production code contains no
+  taxi-specific sequence, package branch or screen identifier.
+- The final Task 7 safety build treats visible controls such as `Заказать такси`
+  and `Заказать еду` as possible final actions. They are never highlighted or
+  turned into an imperative instruction; the loop hands control back locally.
+  The same wording remains valid in the user's goal.
+- Final debug APK installed on 2026-10-18: version `1.0` (`versionCode=1`),
+  SHA-256 `28f0b910998eabe69e11c7016388a65d1533b912a65f63689e3e7a2123452286`.
+  `adb reverse tcp:8787 tcp:8787` was active and `ScreenReaderService` remained
+  enabled and bound after the in-place update.
 
 The device previously had an APK signed with a different key. It required a
 one-time uninstall before this debug build could be installed, so the old

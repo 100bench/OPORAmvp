@@ -133,6 +133,53 @@ data class DeviceContext(
     val inventoryIsComplete: Boolean = false,
 ) {
     /**
+     * Find a single launchable app whose full installed label is explicitly
+     * present in the user's goal. This is local evidence only: no model output
+     * can invent a package name, and short labels such as "Go" are ignored
+     * because they are too easy to match accidentally in ordinary speech.
+     */
+    fun findUniquelyMentionedLaunchableApp(goal: String): DeviceApp? {
+        val normalizedGoal = normalizeForMention(goal)
+        if (normalizedGoal.isBlank()) return null
+
+        data class Mention(val app: DeviceApp, val label: String, val range: IntRange)
+
+        val paddedGoal = " $normalizedGoal "
+        val mentions = buildList {
+            apps.asSequence()
+                .filter { it.enabled && it.launchable }
+                .forEach { app ->
+                    val label = normalizeForMention(app.label)
+                    if (label.length < MIN_EXPLICIT_LABEL_LENGTH) return@forEach
+                    val needle = " $label "
+                    var from = 0
+                    while (true) {
+                        val start = paddedGoal.indexOf(needle, startIndex = from)
+                        if (start < 0) break
+                        add(Mention(app, label, start until start + needle.length))
+                        from = start + 1
+                    }
+                }
+        }
+
+        // "Uber Eats" naturally contains the full label "Uber". Treat the
+        // shorter occurrence as shadowed only when every character belongs to
+        // the longer mention. A separate "Uber" elsewhere still makes the
+        // user's request genuinely ambiguous.
+        val unshadowed = mentions.filter { mention ->
+            mentions.none { other ->
+                other.app.packageName != mention.app.packageName &&
+                    other.label.length > mention.label.length &&
+                    other.range.first <= mention.range.first &&
+                    other.range.last >= mention.range.last
+            }
+        }
+        return unshadowed.map(Mention::app)
+            .distinctBy(DeviceApp::packageName)
+            .singleOrNull()
+    }
+
+    /**
      * Resolve a spoken app name against real evidence.
      *
      * Exact-label matches take precedence over substring matches: "Uber" must
@@ -196,6 +243,13 @@ data class DeviceContext(
 
     companion object {
         private const val MAX_IN_PROMPT = 30
+        private const val MIN_EXPLICIT_LABEL_LENGTH = 3
         fun empty() = DeviceContext(emptyList(), emptySet(), Evidence.UNKNOWN, 0L)
+
+        private fun normalizeForMention(value: String): String = value
+            .lowercase()
+            .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+            .trim()
+            .replace(Regex("\\s+"), " ")
     }
 }

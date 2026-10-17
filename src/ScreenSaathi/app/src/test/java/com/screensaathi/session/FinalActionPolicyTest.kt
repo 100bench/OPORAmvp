@@ -14,6 +14,8 @@ class FinalActionPolicyTest {
             "Подтвердить заказ",
             "Подать заявление",
             "Отправить заявление",
+            "Заказать такси",
+            "Заказать еду",
             "confirm_order_button",
             "Submit application",
         ).forEach { value ->
@@ -43,12 +45,15 @@ class FinalActionPolicyTest {
             "Чтобы продолжить, нажмите «Оплатить»",
             "Пожалуйста, выберите «Подать заявление»",
             "When ready, tap Pay now",
+            "Нажмите «Заказать такси».",
+            "Выберите «Заказать еду».",
         ).forEach { value ->
             assertTrue(value, FinalActionPolicy.containsFinalActionInstruction(value))
         }
 
         listOf(
             "На экране есть кнопка «Оплатить».",
+            "На экране есть кнопка «Заказать такси».",
             "Откройте пункт «Отправить сообщение».",
             "Выберите «Подтвердить выбор».",
         ).forEach { value ->

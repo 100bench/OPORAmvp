@@ -14,6 +14,10 @@ import com.screensaathi.task.GuidedTask
  */
 object SafetyGuard {
 
+    /** The universal planner may describe or point, never request execution. */
+    fun isReadOnlyGuidanceAction(actionType: String): Boolean =
+        actionType == "guide" || actionType == "answer"
+
     /**
      * Refuses a jump to an irreversible step while an earlier step is still
      * blank.

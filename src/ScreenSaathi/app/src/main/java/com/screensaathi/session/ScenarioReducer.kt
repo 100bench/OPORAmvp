@@ -24,6 +24,9 @@ object ScenarioReducer {
             ScenarioEvent.GoalConfirmed -> goalConfirmed(session, nowMs)
             ScenarioEvent.HighlightedTargetTapped -> targetTapped(session, nowMs)
             is ScenarioEvent.ScreenObserved -> screenObserved(session, event, nowMs)
+            is ScenarioEvent.PhysicalTapSettled -> physicalTapSettled(session, event, nowMs)
+            ScenarioEvent.PhysicalTapTimedOut -> physicalTapTimedOut(session, nowMs)
+            is ScenarioEvent.CachedGuideInvalidated -> cachedGuideInvalidated(session, event, nowMs)
             ScenarioEvent.TargetNotFound -> targetNotFound(session, nowMs)
             ScenarioEvent.AuthenticationRequired -> authenticationRequired(session, nowMs)
             ScenarioEvent.NetworkUnavailable -> networkUnavailable(session, nowMs)
@@ -67,10 +70,14 @@ object ScenarioReducer {
                 listOf(
                     ScenarioEffect.ShowDecision(
                         notice = ScenarioNotice.VERIFY_RECOGNITION,
-                        choices = listOf(
-                            ScenarioChoice.CONFIRM_RECOGNITION,
-                            ScenarioChoice.REPEAT_RECOGNITION,
-                        ),
+                        choices = if (goal.isBlank()) {
+                            listOf(ScenarioChoice.REPEAT_RECOGNITION, ScenarioChoice.STOP)
+                        } else {
+                            listOf(
+                                ScenarioChoice.CONFIRM_RECOGNITION,
+                                ScenarioChoice.REPEAT_RECOGNITION,
+                            )
+                        },
                         recognizedGoal = goal,
                     )
                 ),
@@ -261,11 +268,81 @@ object ScenarioReducer {
             )
 
             ScenarioPhase.WAITING_FOR_MANUAL_SCROLL -> manualScrollChanged(session, fingerprint, nowMs)
+            ScenarioPhase.CONFIRMING_GOAL -> ScenarioTransition(
+                session.copy(
+                    phase = ScenarioPhase.ANALYZING_SCREEN,
+                    screenFingerprint = fingerprint,
+                    currentGuidance = null,
+                    updatedAtMs = nowMs,
+                ),
+                listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.AnalyzeCurrentScreen),
+            )
             ScenarioPhase.ANALYZING_SCREEN -> ScenarioTransition(
-                session.copy(screenFingerprint = fingerprint, updatedAtMs = nowMs),
+                session.copy(
+                    screenFingerprint = fingerprint,
+                    replanFailures = 0,
+                    updatedAtMs = nowMs,
+                ),
             )
             else -> unchanged(session)
         }
+    }
+
+    /**
+     * A physical tap is stronger evidence than an ordinary duplicate window
+     * event. Editable fields can open an IME or move focus without changing the
+     * stable semantic fingerprint, so one settled post-tap observation must be
+     * allowed to re-run analysis instead of leaving the session stuck forever.
+     */
+    private fun physicalTapSettled(
+        session: ScenarioSession,
+        event: ScenarioEvent.PhysicalTapSettled,
+        nowMs: Long,
+    ): ScenarioTransition {
+        if (session.phase != ScenarioPhase.WAITING_FOR_SCREEN_CHANGE) return unchanged(session)
+        return ScenarioTransition(
+            session.copy(
+                phase = ScenarioPhase.ANALYZING_SCREEN,
+                screenFingerprint = event.fingerprint.takeIf(String::isNotBlank)
+                    ?: session.screenFingerprint,
+                currentGuidance = null,
+                updatedAtMs = nowMs,
+            ),
+            listOf(ScenarioEffect.AnalyzeCurrentScreen),
+        )
+    }
+
+    private fun physicalTapTimedOut(
+        session: ScenarioSession,
+        nowMs: Long,
+    ): ScenarioTransition {
+        if (session.phase != ScenarioPhase.WAITING_FOR_SCREEN_CHANGE) return unchanged(session)
+        return ScenarioTransition(
+            session.copy(
+                phase = ScenarioPhase.WAITING_FOR_MANUAL_SCROLL,
+                currentGuidance = null,
+                updatedAtMs = nowMs,
+            ),
+            listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.RequestManualScroll),
+        )
+    }
+
+    private fun cachedGuideInvalidated(
+        session: ScenarioSession,
+        event: ScenarioEvent.CachedGuideInvalidated,
+        nowMs: Long,
+    ): ScenarioTransition {
+        if (session.phase != ScenarioPhase.CONFIRMING_GOAL) return unchanged(session)
+        return ScenarioTransition(
+            session.copy(
+                phase = ScenarioPhase.ANALYZING_SCREEN,
+                screenFingerprint = event.fingerprint.takeIf(String::isNotBlank)
+                    ?: session.screenFingerprint,
+                currentGuidance = null,
+                updatedAtMs = nowMs,
+            ),
+            listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.AnalyzeCurrentScreen),
+        )
     }
 
     private fun manualScrollChanged(
@@ -280,9 +357,21 @@ object ScenarioReducer {
             currentGuidance = null,
             updatedAtMs = nowMs,
         )
-        return if (attempts >= MAX_SCROLL_ATTEMPTS) {
-            ScenarioTransition(
-                updated.copy(phase = ScenarioPhase.FAILED),
+        return ScenarioTransition(
+            updated.copy(phase = ScenarioPhase.ANALYZING_SCREEN),
+            listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.AnalyzeCurrentScreen),
+        )
+    }
+
+    private fun targetNotFound(session: ScenarioSession, nowMs: Long): ScenarioTransition {
+        if (session.phase != ScenarioPhase.ANALYZING_SCREEN) return unchanged(session)
+        if (session.scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
+            return ScenarioTransition(
+                session.copy(
+                    phase = ScenarioPhase.FAILED,
+                    currentGuidance = null,
+                    updatedAtMs = nowMs,
+                ),
                 listOf(
                     ScenarioEffect.ClearHighlight,
                     ScenarioEffect.ShowRecoverableFailure(
@@ -295,16 +384,7 @@ object ScenarioReducer {
                     ),
                 ),
             )
-        } else {
-            ScenarioTransition(
-                updated.copy(phase = ScenarioPhase.ANALYZING_SCREEN),
-                listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.AnalyzeCurrentScreen),
-            )
         }
-    }
-
-    private fun targetNotFound(session: ScenarioSession, nowMs: Long): ScenarioTransition {
-        if (session.phase != ScenarioPhase.ANALYZING_SCREEN) return unchanged(session)
         return ScenarioTransition(
             session.copy(
                 phase = ScenarioPhase.WAITING_FOR_MANUAL_SCROLL,
@@ -440,6 +520,13 @@ object ScenarioReducer {
     }
 
     private fun continueRequested(session: ScenarioSession, nowMs: Long): ScenarioTransition {
+        if (session.phase == ScenarioPhase.GUIDING_STEP) {
+            val guidance = session.currentGuidance ?: return unchanged(session)
+            return ScenarioTransition(
+                session.copy(updatedAtMs = nowMs),
+                listOf(ScenarioEffect.ShowGuidance(guidance)),
+            )
+        }
         if (session.phase != ScenarioPhase.PAUSED_FOR_AUTH) return unchanged(session)
         return ScenarioTransition(
             session.copy(phase = ScenarioPhase.ANALYZING_SCREEN, updatedAtMs = nowMs),
@@ -448,6 +535,17 @@ object ScenarioReducer {
     }
 
     private fun retryRequested(session: ScenarioSession, nowMs: Long): ScenarioTransition {
+        if (session.phase == ScenarioPhase.GUIDING_STEP) {
+            val instruction = session.lastSafeInstruction ?: return unchanged(session)
+            val guidance = session.currentGuidance ?: return unchanged(session)
+            return ScenarioTransition(
+                session.copy(updatedAtMs = nowMs),
+                listOf(
+                    ScenarioEffect.ShowGuidance(guidance),
+                    ScenarioEffect.SpeakText(instruction),
+                ),
+            )
+        }
         if (session.phase !in setOf(ScenarioPhase.PAUSED_FOR_NETWORK, ScenarioPhase.FAILED)) {
             return unchanged(session)
         }
