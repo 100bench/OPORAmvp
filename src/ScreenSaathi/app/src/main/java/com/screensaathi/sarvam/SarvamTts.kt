@@ -55,7 +55,9 @@ class SarvamTts {
                     Log.w(TAG, "TTS ${resp.code}: $raw")
                     return null
                 }
-                resp.body?.bytes()?.takeIf { it.isNotEmpty() }
+                resp.body?.bytes()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let(WavStreamHeader::repair)
             }
         } catch (e: Exception) {
             Log.w(TAG, "TTS failed (${e.javaClass.simpleName}): ${e.message}", e)
