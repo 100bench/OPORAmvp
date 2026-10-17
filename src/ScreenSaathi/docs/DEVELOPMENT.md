@@ -67,6 +67,36 @@ Leave the proxy running while testing. `adb reverse` lasts only while the USB
 device is connected (and may need to be repeated after reconnecting). The
 proxy listens only on Mac loopback, so it is not exposed to the local network.
 
+OpenAI sees the Mac's egress route, not the phone's. Enable the Mac VPN before
+starting a live test and confirm that `api.openai.com` is routed through the
+VPN. A `403` with `unsupported_country_region_territory` means the USB reverse
+and local proxy are working, but the Mac is still exiting through an unsupported
+region.
+
+## Physical smoke baseline — Samsung Galaxy Note10+
+
+Checked 2026-10-17 with APK commit `b49d85a` on serial `RF8MA183F5A`:
+
+- Samsung SM-N975F, Android 12 / API 31, One UI 4.1.
+- Overlay, microphone and Accessibility permissions were enabled; the overlay
+  and screen-reader services were both bound after an in-place APK update.
+- The phone reached the loopback development proxy through
+  `adb reverse tcp:8787 tcp:8787`; with the Mac VPN active, OpenAI model,
+  planner and TTS endpoints returned successfully.
+- A command typed into the overlay completed the Android → proxy → planner →
+  TTS path. MediaPlayer prepared, started and completed the returned audio.
+- Using UI-tree data only (no screenshots), the resolver found and highlighted
+  an ordinary visible control in Yandex Go.
+- OpenAI's streamed WAV response used unknown RIFF/data lengths. Commit
+  `b49d85a` finalises those lengths after download; the focused regression test
+  and the physical playback both pass.
+- Voice/STT scenarios and the Stop control remain manual acceptance checks by
+  agreement with the tester; do not mark them passed from this baseline.
+
+The device previously had an APK signed with a different key. It required a
+one-time uninstall before this debug build could be installed, so the old
+package's local data and permissions were not retained.
+
 ## Debugging on-device
 
 ```bash
