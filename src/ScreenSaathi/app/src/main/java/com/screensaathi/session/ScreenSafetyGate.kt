@@ -39,11 +39,12 @@ object ScreenSafetyGate {
             )
         }
 
-        if (snapshot.elements.any { it.password || isPasswordInputType(it.inputType) }) {
+        val visibleElements = snapshot.elements.filter(ScreenElement::visibleToUser)
+        if (visibleElements.any { it.password || isPasswordInputType(it.inputType) }) {
             return pauseAuth()
         }
 
-        val rawLabels = snapshot.elements.asSequence().flatMap(::rawSafetyValues)
+        val rawLabels = visibleElements.asSequence().flatMap(::rawSafetyValues)
         for (value in rawLabels) {
             val normalized = value.lowercase(Locale.ROOT)
             if (AUTHENTICATION.containsMatchIn(normalized)) return pauseAuth()
@@ -72,7 +73,9 @@ object ScreenSafetyGate {
         element.text,
         element.contentDescription,
         element.hintText,
-        element.resourceId,
+        // A decorative map pin is not a PIN entry. An ID-only auth signal is
+        // meaningful when it belongs to a field the user can type into.
+        if (element.editable) element.resourceId else "",
     ).filter(String::isNotBlank)
 
     private fun pauseAuth() = ScreenSafetyAssessment(

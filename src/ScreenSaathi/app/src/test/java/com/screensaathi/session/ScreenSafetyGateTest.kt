@@ -42,6 +42,50 @@ class ScreenSafetyGateTest {
     }
 
     @Test
+    fun `hidden auth controls do not pause a visible address field`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(
+                element(text = "Куда поедем?", resourceId = "destination_input"),
+                element(
+                    text = "Пароль",
+                    resourceId = "password_field",
+                    password = true,
+                    inputType = 0x00000081,
+                    visibleToUser = false,
+                ),
+            )
+        )
+
+        assertEquals(ScreenDisposition.ALLOW, assessment.disposition)
+    }
+
+    @Test
+    fun `visible map pin is not treated as a PIN code field`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(
+                element(text = "Куда поедем?", resourceId = "destination_input"),
+                element(
+                    text = "",
+                    resourceId = "map_pin",
+                    className = "ImageView",
+                    editable = false,
+                ),
+            )
+        )
+
+        assertEquals(ScreenDisposition.ALLOW, assessment.disposition)
+    }
+
+    @Test
+    fun `visible PIN input ID still pauses without a label`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(element(text = "", resourceId = "pin_input"))
+        )
+
+        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+    }
+
+    @Test
     fun `card and irreversible payment or order actions use safe handoff`() {
         listOf(
             "Номер карты",
@@ -105,17 +149,21 @@ class ScreenSafetyGateTest {
     private fun element(
         text: String,
         resourceId: String = "field",
+        className: String = "EditText",
+        editable: Boolean = true,
         password: Boolean = false,
         inputType: Int = 0,
+        visibleToUser: Boolean = true,
     ) = ScreenElement(
         index = 0,
         resourceId = resourceId,
         text = text,
-        className = "EditText",
+        className = className,
         bounds = Rect(0, 0, 100, 100),
-        editable = true,
+        editable = editable,
         clickable = true,
         password = password,
         inputType = inputType,
+        visibleToUser = visibleToUser,
     )
 }
