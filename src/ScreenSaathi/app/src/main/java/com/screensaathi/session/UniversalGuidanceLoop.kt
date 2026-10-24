@@ -7,6 +7,7 @@ import com.screensaathi.sarvam.PlannerResult
 import com.screensaathi.screen.ScreenSanitizer
 import com.screensaathi.screen.ScreenSnapshot
 import com.screensaathi.screen.TargetResolver
+import com.screensaathi.screen.ModalDismissResolver
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
@@ -57,6 +58,7 @@ class UniversalGuidanceLoop(
     private var state: ScenarioSession = ScenarioSession.idle(clock())
 
     private var pendingTarget: ResolvedScenarioTarget? = null
+    private var modalSettleChecks = 0
 
     val session: ScenarioSession
         get() = synchronized(lock) { state }
@@ -70,6 +72,7 @@ class UniversalGuidanceLoop(
         synchronized(lock) {
             state = ScenarioSession.idle(clock())
             pendingTarget = null
+            modalSettleChecks = 0
         }
         // The caller already supplied the recognized text. StartRequested is
         // still reduced to establish the phase, but its microphone effect is
@@ -84,6 +87,7 @@ class UniversalGuidanceLoop(
         synchronized(lock) {
             state = ScenarioSession.idle(clock())
             pendingTarget = null
+            modalSettleChecks = 0
         }
         dispatch(ScenarioEvent.ResumeRequested(capsule), token)
     }
@@ -156,6 +160,9 @@ class UniversalGuidanceLoop(
         dispatch(ScenarioEvent.ScreenObserved(snapshot.signature()), token)
     }
 
+    /** Delayed local retry for a dialog whose Accessibility tree was still changing. */
+    fun recheckCurrentScreen() = analyzeCurrentScreen(generation.get(), repairFormat = false)
+
     fun continueAfterAuth() = dispatch(ScenarioEvent.ContinueRequested, generation.get())
 
     fun retry() {
@@ -194,6 +201,7 @@ class UniversalGuidanceLoop(
             val next = ScenarioReducer.reduce(state, ScenarioEvent.StopRequested, clock())
             state = next.session
             pendingTarget = null
+            modalSettleChecks = 0
             next
         }
         transition.effects.forEach { execute(it, token) }
@@ -266,6 +274,76 @@ class UniversalGuidanceLoop(
             ScreenDisposition.ALLOW -> Unit
         }
 
+        if (raw.activeDialog) {
+            if (!raw.settled) {
+                waitForModalSettle(token)
+                return
+            }
+            val fresh = snapshotProvider()
+            if (token != generation.get()) return
+            when (assess(fresh).disposition) {
+                ScreenDisposition.PAUSE_AUTH -> {
+                    dispatch(ScenarioEvent.AuthenticationRequired, token)
+                    return
+                }
+                ScreenDisposition.SAFE_HANDOFF -> {
+                    dispatch(ScenarioEvent.SafeHandoffRequired, token)
+                    return
+                }
+                ScreenDisposition.ALLOW -> Unit
+            }
+            if (!fresh.settled) {
+                waitForModalSettle(token)
+                return
+            }
+            if (fresh.localIdentity() != snapshotIdentity) {
+                if (staleReplans >= MAX_STALE_REPLANS) {
+                    dispatch(ScenarioEvent.ManualDismissRequired, token)
+                } else {
+                    analyzeCurrentScreen(token, repairFormat = false,
+                        staleReplans = staleReplans + 1)
+                }
+                return
+            }
+            synchronized(lock) { modalSettleChecks = 0 }
+        }
+
+        when (val modal = ModalDismissResolver.resolve(raw)) {
+            ModalDismissResolver.Result.NotModal -> Unit
+            ModalDismissResolver.Result.ManualDismiss -> {
+                dispatch(ScenarioEvent.ManualDismissRequired, token)
+                return
+            }
+            is ModalDismissResolver.Result.CloseTarget -> {
+                val close = modal.element
+                synchronized(lock) {
+                    pendingTarget = ResolvedScenarioTarget(
+                        left = close.bounds.left,
+                        top = close.bounds.top,
+                        right = close.bounds.right,
+                        bottom = close.bounds.bottom,
+                        fingerprint = fingerprint,
+                        snapshotIdentity = snapshotIdentity,
+                        resourceId = close.resourceId.takeIf(String::isNotBlank),
+                        text = close.text.takeIf(String::isNotBlank),
+                    )
+                }
+                dispatch(
+                    ScenarioEvent.ModalCloseAvailable(
+                        ScenarioGuidance(
+                            instruction = "Закройте появившееся окно, нажав выделенную кнопку закрытия. Потом я продолжу помощь.",
+                            target = ScenarioTarget(
+                                resourceId = close.resourceId.takeIf(String::isNotBlank),
+                                text = close.text.takeIf(String::isNotBlank) ?: "Закрыть",
+                            ),
+                        )
+                    ),
+                    token,
+                )
+                return
+            }
+        }
+
         val safeScreen = ScreenSanitizer.sanitize(raw)
 
         // An unreadable tree provides no evidence that it is safe to route
@@ -336,6 +414,17 @@ class UniversalGuidanceLoop(
             )
             is PlannerOutcome.Success -> acceptPlan(outcome.plan, raw, token, repairFormat, staleReplans)
         }
+    }
+
+    private fun waitForModalSettle(token: Long) {
+        val retry = synchronized(lock) {
+            if (modalSettleChecks < MAX_MODAL_SETTLE_CHECKS) {
+                modalSettleChecks++
+                true
+            } else false
+        }
+        if (retry) execute(ScenarioEffect.RecheckModalAfterSettling, token)
+        else dispatch(ScenarioEvent.ManualDismissRequired, token)
     }
 
     private fun acceptPlan(
@@ -460,6 +549,7 @@ class UniversalGuidanceLoop(
 
         add(packageName)
         add(settled)
+        add(activeDialog)
         elements.forEach { element ->
             add(element.index)
             add(element.resourceId)
@@ -480,6 +570,8 @@ class UniversalGuidanceLoop(
             add(element.password)
             add(element.inputType)
             add(element.visibleToUser)
+            add(element.inDialog)
+            add(element.clickableAncestorIndex)
         }
         return digest.digest().joinToString("") { byte ->
             (byte.toInt() and 0xff).toString(16).padStart(2, '0')
@@ -488,5 +580,6 @@ class UniversalGuidanceLoop(
 
     private companion object {
         const val MAX_STALE_REPLANS = 1
+        const val MAX_MODAL_SETTLE_CHECKS = 3
     }
 }

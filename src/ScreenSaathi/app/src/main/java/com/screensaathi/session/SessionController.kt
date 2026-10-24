@@ -398,6 +398,9 @@ class SessionController(
             val message = when (session.phase) {
                 ScenarioPhase.WAITING_FOR_MANUAL_SCROLL ->
                     "Не могу надёжно выделить цель. Проверьте подписи и действуйте вручную; я продолжу после изменения экрана."
+                ScenarioPhase.WAITING_FOR_MODAL_DISMISS ->
+                    session.currentGuidance?.instruction
+                        ?: "Закройте появившееся окно. После закрытия я продолжу помощь."
                 ScenarioPhase.GUIDING_STEP ->
                     session.lastSafeInstruction
                         ?: "Нажмите выделенный элемент на экране или остановите сценарий."
@@ -598,6 +601,24 @@ class SessionController(
                 )
             }
 
+            ScenarioEffect.RequestManualModalDismiss -> {
+                currentHighlight = null
+                renderIfCurrent(
+                    turn,
+                    OverlayCommand(
+                        PillState.GUIDING,
+                        expanded = true,
+                        instruction = "Появилось окно поверх экрана. Закройте его сами; после закрытия я продолжу помощь.",
+                        language = lastLanguage,
+                        highlight = null,
+                    ),
+                )
+            }
+
+            ScenarioEffect.RecheckModalAfterSettling -> bg.postDelayed({
+                if (universalActive && isCurrent(turn)) universalLoop.recheckCurrentScreen()
+            }, 350L)
+
             is ScenarioEffect.ConfirmGoal -> {
                 // The target app may have become visible because the user
                 // opened it manually. From here START confirms guidance, not
@@ -661,7 +682,10 @@ class SessionController(
                     true,
                 )
                 val instruction = effect.guidance.instruction
-                val numbered = if (instruction.trimStart().startsWith("Шаг ", ignoreCase = true)) {
+                val numbered = if (
+                    universalLoop.session.phase == ScenarioPhase.WAITING_FOR_MODAL_DISMISS ||
+                    instruction.trimStart().startsWith("Шаг ", ignoreCase = true)
+                ) {
                     instruction
                 } else {
                     "Шаг ${universalLoop.session.stepNumber}. $instruction"
@@ -2231,6 +2255,11 @@ class SessionController(
                 ),
             )
             bg.post { continueUniversalAfterTap(turn, previousFingerprint) }
+            return
+        }
+
+        if (universalActive && universalLoop.session.phase == ScenarioPhase.WAITING_FOR_MODAL_DISMISS) {
+            scheduleUniversalScreenObservation()
             return
         }
 

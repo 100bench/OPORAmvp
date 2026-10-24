@@ -24,12 +24,18 @@ data class ScreenElement(
     val password: Boolean = false,
     val inputType: Int = 0,
     val visibleToUser: Boolean = true,
+    /** Local ancestry marker; never a substitute for visible dialog evidence. */
+    val inDialog: Boolean = false,
+    /** Nearest emitted clickable ancestor, retained only on the device. */
+    val clickableAncestorIndex: Int? = null,
 )
 
 data class ScreenSnapshot(
     val packageName: String,
     val settled: Boolean,
     val elements: List<ScreenElement>,
+    /** True only for a visible dialog node in the current Accessibility tree. */
+    val activeDialog: Boolean = false,
 ) {
     /** Live bounds for a step's resource_id, or null if not currently on screen. */
     fun boundsForResourceId(resourceId: String): Rect? {
@@ -112,6 +118,6 @@ data class ScreenSnapshot(
             .take(6)
             .sorted()
             .joinToString("|")
-        return "$packageName#$labels"
+        return "$packageName#dialog=$activeDialog#$labels"
     }
 }

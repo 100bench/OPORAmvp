@@ -278,6 +278,45 @@ class ScenarioReducerTest {
     }
 
     @Test
+    fun `modal close guidance keeps the goal and step while waiting for dismissal`() {
+        val initial = recognized().copy(screenFingerprint = "dialog", stepNumber = 2, scrollAttempts = 1)
+        val close = ScenarioGuidance("Закройте окно, нажав выделенный крестик.", ScenarioTarget(text = "Закрыть"))
+
+        val waiting = reduce(initial, ScenarioEvent.ModalCloseAvailable(close), 108)
+
+        assertEquals(ScenarioPhase.WAITING_FOR_MODAL_DISMISS, waiting.session.phase)
+        assertEquals(initial.goal, waiting.session.goal)
+        assertEquals(2, waiting.session.stepNumber)
+        assertEquals(1, waiting.session.scrollAttempts)
+        assertTrue(waiting.effects.any { it is ScenarioEffect.ShowGuidance })
+        assertTrue(waiting.effects.none { it is ScenarioEffect.RequestManualScroll })
+
+        val changed = reduce(waiting.session, ScenarioEvent.ScreenObserved("dismissed"), 109)
+        assertEquals(ScenarioPhase.ANALYZING_SCREEN, changed.session.phase)
+        assertEquals(initial.goal, changed.session.goal)
+        assertEquals(1, changed.session.scrollAttempts)
+        assertTrue(changed.effects.contains(ScenarioEffect.AnalyzeCurrentScreen))
+    }
+
+    @Test
+    fun `modal without a close control pauses without consuming a scroll attempt`() {
+        val initial = recognized().copy(screenFingerprint = "dialog", scrollAttempts = 2)
+
+        val waiting = reduce(initial, ScenarioEvent.ManualDismissRequired, 108)
+
+        assertEquals(ScenarioPhase.WAITING_FOR_MODAL_DISMISS, waiting.session.phase)
+        assertEquals(2, waiting.session.scrollAttempts)
+        assertTrue(waiting.effects.contains(ScenarioEffect.RequestManualModalDismiss))
+        assertTrue(waiting.effects.none { it is ScenarioEffect.RequestManualScroll })
+        assertEquals(waiting.session, reduce(waiting.session, ScenarioEvent.ScreenObserved("dialog"), 109).session)
+
+        val changed = reduce(waiting.session, ScenarioEvent.ScreenObserved("dismissed"), 110)
+        assertEquals(ScenarioPhase.ANALYZING_SCREEN, changed.session.phase)
+        assertEquals(2, changed.session.scrollAttempts)
+        assertEquals(initial.goal, changed.session.goal)
+    }
+
+    @Test
     fun `TTS failure can retry the last instruction or continue with visual guidance`() {
         val guiding = guiding()
 

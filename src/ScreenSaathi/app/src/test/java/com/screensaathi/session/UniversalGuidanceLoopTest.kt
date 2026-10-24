@@ -53,6 +53,139 @@ class UniversalGuidanceLoopTest {
     }
 
     @Test
+    fun `dialog close control is highlighted locally without a planner call`() {
+        val close = element(0, "close_button", "Закрыть", 900).copy(inDialog = true)
+        val dialog = ScreenSnapshot("example.popup", true, listOf(close), activeDialog = true)
+        val planner = RepeatingPlanner(answer("unused"))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { dialog }, clock(), emissions::add)
+
+        loop.startGoal("Найти товары")
+
+        assertEquals(0, planner.calls)
+        assertEquals(ScenarioPhase.WAITING_FOR_MODAL_DISMISS, loop.session.phase)
+        val shown = emissions.single { it.effect is ScenarioEffect.ShowGuidance }
+        assertEquals(close.bounds.left, shown.resolvedTarget?.left)
+        assertEquals(close.bounds.right, shown.resolvedTarget?.right)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.RequestManualScroll })
+    }
+
+    @Test
+    fun `unsettled dialog waits for a fresh safe snapshot before highlighting`() {
+        val close = element(0, "close_button", "Закрыть", 900).copy(inDialog = true)
+        val current = AtomicReference(
+            ScreenSnapshot("example.popup", false, listOf(close), activeDialog = true)
+        )
+        val planner = RepeatingPlanner(answer("unused"))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { current.get() }, clock(), emissions::add)
+
+        loop.startGoal("Найти товары")
+
+        assertEquals(ScenarioPhase.ANALYZING_SCREEN, loop.session.phase)
+        assertTrue(emissions.any { it.effect is ScenarioEffect.RecheckModalAfterSettling })
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
+        assertTrue(emissions.none { it.effect is ScenarioEffect.RequestManualScroll })
+        assertEquals(0, planner.calls)
+
+        current.set(current.get().copy(settled = true))
+        loop.recheckCurrentScreen()
+
+        assertEquals(ScenarioPhase.WAITING_FOR_MODAL_DISMISS, loop.session.phase)
+        assertTrue(emissions.any { it.effect is ScenarioEffect.ShowGuidance })
+        assertEquals(0, planner.calls)
+    }
+
+    @Test
+    fun `dialog without close target waits then resumes same goal after dismissal`() {
+        val dialog = ScreenSnapshot(
+            "example.popup", true,
+            listOf(element(0, "", "Рекламное окно", 100).copy(clickable = false, inDialog = true)),
+            activeDialog = true,
+        )
+        val ordinary = screen("popup", "search", "Поиск", 100)
+        val current = AtomicReference(dialog)
+        val planner = RepeatingPlanner(guide("Нажмите «Поиск».", resourceId = "search"))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { current.get() }, clock(), emissions::add)
+
+        loop.startGoal("Найти товары")
+
+        assertEquals(0, planner.calls)
+        assertEquals(ScenarioPhase.WAITING_FOR_MODAL_DISMISS, loop.session.phase)
+        assertEquals("Найти товары", loop.session.goal)
+        assertEquals(0, loop.session.scrollAttempts)
+        assertTrue(emissions.any { it.effect is ScenarioEffect.RequestManualModalDismiss })
+        assertTrue(emissions.none { it.effect is ScenarioEffect.RequestManualScroll })
+
+        current.set(ordinary)
+        loop.observeScreen(ordinary)
+
+        assertEquals(1, planner.calls)
+        assertEquals("Найти товары", loop.session.goal)
+        assertEquals(ScenarioPhase.CONFIRMING_GOAL, loop.session.phase)
+        assertEquals(0, loop.session.scrollAttempts)
+    }
+
+    @Test
+    fun `popup appearing mid guidance suspends old step and replans after close`() {
+        val initial = screen("stable", "lavka", "Лавка", 100)
+        val popup = ScreenSnapshot(
+            "example.stable", true,
+            listOf(element(0, "close_button", "Закрыть", 900).copy(inDialog = true)),
+            activeDialog = true,
+        )
+        val next = screen("stable", "search", "Поиск", 100)
+        val current = AtomicReference(initial)
+        val planner = QueuePlanner(
+            guide("Нажмите «Лавка».", resourceId = "lavka"),
+            guide("Нажмите «Поиск».", resourceId = "search"),
+        )
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { current.get() }, clock(), emissions::add)
+
+        loop.startGoal("Найти товар в Лавке")
+        loop.confirmGoal()
+        assertEquals(1, loop.session.stepNumber)
+
+        current.set(popup)
+        loop.observeScreen(popup)
+        assertEquals(ScenarioPhase.WAITING_FOR_MODAL_DISMISS, loop.session.phase)
+        assertEquals(1, planner.calls)
+        assertEquals(1, loop.session.stepNumber)
+        assertEquals("Найти товар в Лавке", loop.session.goal)
+        assertTrue(emissions.last { it.effect is ScenarioEffect.ShowGuidance }.resolvedTarget != null)
+
+        current.set(next)
+        loop.observeScreen(next)
+        assertEquals(2, planner.calls)
+        assertEquals(ScenarioPhase.GUIDING_STEP, loop.session.phase)
+        assertEquals(2, loop.session.stepNumber)
+        assertEquals("Найти товар в Лавке", loop.session.goal)
+    }
+
+    @Test
+    fun `sensitive field in a dialog pauses before local close guidance`() {
+        val dialog = ScreenSnapshot(
+            "example.popup", true,
+            listOf(
+                element(0, "close_button", "Закрыть", 900).copy(inDialog = true),
+                element(1, "password", "Пароль", 100, password = true).copy(inDialog = true),
+            ),
+            activeDialog = true,
+        )
+        val planner = RepeatingPlanner(answer("unused"))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { dialog }, clock(), emissions::add)
+
+        loop.startGoal("Найти товары")
+
+        assertEquals(ScenarioPhase.PAUSED_FOR_AUTH, loop.session.phase)
+        assertEquals(0, planner.calls)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
+    }
+
+    @Test
     fun `first guide is cached until Start and resolves against its planning snapshot`() {
         val fixture = Fixture(guide("Нажмите «Куда».", resourceId = "destination"))
 
@@ -295,6 +428,36 @@ class UniversalGuidanceLoopTest {
             assertTrue(emissions.none { it.effect is ScenarioEffect.ConfirmGoal })
             assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
         }
+    }
+
+    @Test
+    fun `dialog appearing during planning invalidates the old target`() {
+        val original = stableScreen()
+        val current = AtomicReference(original)
+        var calls = 0
+        val planner = object : GuidancePlanner {
+            override fun planNext(
+                screen: PlannerScreen,
+                goal: String,
+                stepNumber: Int,
+                lastSafeInstruction: String?,
+                repairFormat: Boolean,
+            ): PlannerOutcome {
+                calls++
+                if (calls == 1) {
+                    current.set(original.copy(activeDialog = true))
+                    return guide("Нажмите «Куда».", resourceId = "destination")
+                }
+                return PlannerOutcome.Failure(PlannerFailureKind.NETWORK, "test network pause")
+            }
+        }
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { current.get() }, clock(), emissions::add)
+
+        loop.startGoal("Заказать такси")
+
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ConfirmGoal })
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
     }
 
     @Test

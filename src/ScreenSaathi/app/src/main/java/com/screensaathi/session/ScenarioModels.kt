@@ -15,6 +15,7 @@ enum class ScenarioPhase {
     GUIDING_STEP,
     WAITING_FOR_SCREEN_CHANGE,
     WAITING_FOR_MANUAL_SCROLL,
+    WAITING_FOR_MODAL_DISMISS,
     PAUSED_FOR_AUTH,
     PAUSED_FOR_NETWORK,
     SAFE_HANDOFF,
@@ -140,6 +141,8 @@ sealed interface ScenarioEvent {
     object PhysicalTapTimedOut : ScenarioEvent
     data class CachedGuideInvalidated(val fingerprint: String) : ScenarioEvent
     object TargetNotFound : ScenarioEvent
+    data class ModalCloseAvailable(val guidance: ScenarioGuidance) : ScenarioEvent
+    object ManualDismissRequired : ScenarioEvent
     object AuthenticationRequired : ScenarioEvent
     object NetworkUnavailable : ScenarioEvent
     data class NetworkRecoveryRequested(
@@ -170,6 +173,8 @@ sealed interface ScenarioEffect {
     object ShowIdle : ScenarioEffect
     object FinishScenario : ScenarioEffect
     object RequestManualScroll : ScenarioEffect
+    object RequestManualModalDismiss : ScenarioEffect
+    object RecheckModalAfterSettling : ScenarioEffect
 
     data class ShowDecision(
         val notice: ScenarioNotice,

@@ -8,6 +8,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.screensaathi.screen.ScreenElement
 import com.screensaathi.screen.ScreenSnapshot
+import com.screensaathi.screen.DialogEvidence
 import com.screensaathi.session.SessionController
 
 /**
@@ -60,6 +61,10 @@ class ScreenReaderService : AccessibilityService() {
             // our own non-focusable window. This is what lets the assistant get
             // out of the IME's way.
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                if (!isOwnOverlayEvent(event)) {
+                    lastEventUptime = SystemClock.uptimeMillis()
+                    SessionController.instance?.onWindowStateChanged()
+                }
                 OverlayService.onSystemWindowsChanged()
             }
 
@@ -191,14 +196,19 @@ class ScreenReaderService : AccessibilityService() {
         val pkg = root.packageName?.toString() ?: ""
         val elements = ArrayList<ScreenElement>()
         val counter = intArrayOf(0)
-        walk(root, elements, counter)
-        return ScreenSnapshot(pkg, isSettled(), elements)
+        val dialogSeen = booleanArrayOf(false)
+        walk(root, elements, counter, inDialog = false, dialogSeen,
+            clickableAncestorIndex = null)
+        return ScreenSnapshot(pkg, isSettled(), elements, activeDialog = dialogSeen[0])
     }
 
     private fun walk(
         node: AccessibilityNodeInfo?,
         out: ArrayList<ScreenElement>,
         counter: IntArray,
+        inDialog: Boolean,
+        dialogSeen: BooleanArray,
+        clickableAncestorIndex: Int?,
     ) {
         if (node == null || counter[0] >= MAX_ELEMENTS) return
 
@@ -207,6 +217,14 @@ class ScreenReaderService : AccessibilityService() {
         // here: the guided demo screen lives in this same package, so a
         // package-level filter throws away the very screen we must read.
         if (rid in OVERLAY_IDS) return
+        val nodeClass = node.className?.toString()?.substringAfterLast('.').orEmpty()
+        val dialogChildIds = if (rid == "parentPanel" || rid == "dialog" ||
+            rid.endsWith("_dialog")) dialogDescendantIds(node) else emptySet()
+        val isDialog = DialogEvidence.isDialogNode(
+            nodeClass, rid, node.isClickable, dialogChildIds,
+        )
+        val insideDialog = inDialog || isDialog
+        if (isDialog && node.isVisibleToUser) dialogSeen[0] = true
         val rawText = node.text?.toString()?.trim().orEmpty()
         val rawDesc = node.contentDescription?.toString()?.trim().orEmpty()
         // An empty field is labelled ONLY by its hint ("Search for 'Sweets'",
@@ -226,12 +244,14 @@ class ScreenReaderService : AccessibilityService() {
         val hasSignal = rid.isNotEmpty() || text.isNotEmpty() ||
             node.isClickable || node.isEditable
 
+        var childClickableAncestorIndex = clickableAncestorIndex
         if (hasSignal) {
             val b = Rect().also { node.getBoundsInScreen(it) }
             if (b.width() > MIN_PX && b.height() > MIN_PX) {
+                val index = counter[0]++
                 out.add(
                     ScreenElement(
-                        index = counter[0]++,
+                        index = index,
                         resourceId = rid,
                         text = text,
                         className = node.className?.toString()?.substringAfterLast('.') ?: "View",
@@ -247,13 +267,31 @@ class ScreenReaderService : AccessibilityService() {
                         password = node.isPassword,
                         inputType = node.inputType,
                         visibleToUser = node.isVisibleToUser,
+                        inDialog = insideDialog,
+                        clickableAncestorIndex = clickableAncestorIndex,
                     )
                 )
+                if (node.isClickable) childClickableAncestorIndex = index
             }
         }
         for (i in 0 until node.childCount) {
-            walk(node.getChild(i), out, counter)
+            walk(node.getChild(i), out, counter, insideDialog, dialogSeen,
+                childClickableAncestorIndex)
         }
+    }
+
+    /** IDs from a bounded subtree of a potential native dialog; no UI text is read. */
+    private fun dialogDescendantIds(root: AccessibilityNodeInfo): Set<String> {
+        val pending = ArrayDeque<AccessibilityNodeInfo>()
+        for (i in 0 until root.childCount) root.getChild(i)?.let(pending::addLast)
+        val ids = mutableSetOf<String>()
+        var visited = 0
+        while (pending.isNotEmpty() && visited++ < MAX_DIALOG_SCAN_NODES) {
+            val child = pending.removeFirst()
+            child.viewIdResourceName?.substringAfterLast('/')?.let(ids::add)
+            for (i in 0 until child.childCount) child.getChild(i)?.let(pending::addLast)
+        }
+        return ids
     }
 
     companion object {
@@ -269,6 +307,7 @@ class ScreenReaderService : AccessibilityService() {
          */
         private const val MAX_ELEMENTS = 600
         private const val MIN_PX = 4
+        private const val MAX_DIALOG_SCAN_NODES = 80
 
         /** View ids belonging to the floating overlay itself — never guidance targets. */
         private val OVERLAY_IDS = setOf(

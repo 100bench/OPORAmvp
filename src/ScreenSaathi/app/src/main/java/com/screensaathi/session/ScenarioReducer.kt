@@ -29,6 +29,8 @@ object ScenarioReducer {
             ScenarioEvent.PhysicalTapTimedOut -> physicalTapTimedOut(session, nowMs)
             is ScenarioEvent.CachedGuideInvalidated -> cachedGuideInvalidated(session, event, nowMs)
             ScenarioEvent.TargetNotFound -> targetNotFound(session, nowMs)
+            is ScenarioEvent.ModalCloseAvailable -> modalCloseAvailable(session, event, nowMs)
+            ScenarioEvent.ManualDismissRequired -> manualDismissRequired(session, nowMs)
             ScenarioEvent.AuthenticationRequired -> authenticationRequired(session, nowMs)
             ScenarioEvent.NetworkUnavailable -> networkUnavailable(session, nowMs)
             is ScenarioEvent.NetworkRecoveryRequested -> networkRecoveryRequested(session, event, nowMs)
@@ -293,6 +295,15 @@ object ScenarioReducer {
             )
 
             ScenarioPhase.WAITING_FOR_MANUAL_SCROLL -> manualScrollChanged(session, fingerprint, nowMs)
+            ScenarioPhase.WAITING_FOR_MODAL_DISMISS -> ScenarioTransition(
+                session.copy(
+                    phase = ScenarioPhase.ANALYZING_SCREEN,
+                    screenFingerprint = fingerprint,
+                    currentGuidance = null,
+                    updatedAtMs = nowMs,
+                ),
+                listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.AnalyzeCurrentScreen),
+            )
             ScenarioPhase.CONFIRMING_GOAL -> ScenarioTransition(
                 session.copy(
                     phase = ScenarioPhase.ANALYZING_SCREEN,
@@ -421,6 +432,37 @@ object ScenarioReducer {
                 updatedAtMs = nowMs,
             ),
             listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.RequestManualScroll),
+        )
+    }
+
+    private fun modalCloseAvailable(
+        session: ScenarioSession,
+        event: ScenarioEvent.ModalCloseAvailable,
+        nowMs: Long,
+    ): ScenarioTransition {
+        if (session.phase != ScenarioPhase.ANALYZING_SCREEN) return unchanged(session)
+        return ScenarioTransition(
+            session.copy(
+                phase = ScenarioPhase.WAITING_FOR_MODAL_DISMISS,
+                currentGuidance = event.guidance,
+                updatedAtMs = nowMs,
+            ),
+            listOf(
+                ScenarioEffect.ShowGuidance(event.guidance),
+                ScenarioEffect.SpeakText(event.guidance.instruction),
+            ),
+        )
+    }
+
+    private fun manualDismissRequired(session: ScenarioSession, nowMs: Long): ScenarioTransition {
+        if (session.phase != ScenarioPhase.ANALYZING_SCREEN) return unchanged(session)
+        return ScenarioTransition(
+            session.copy(
+                phase = ScenarioPhase.WAITING_FOR_MODAL_DISMISS,
+                currentGuidance = null,
+                updatedAtMs = nowMs,
+            ),
+            listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.RequestManualModalDismiss),
         )
     }
 
