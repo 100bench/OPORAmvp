@@ -19,6 +19,7 @@ class LatencyProfileTest {
         val required: Boolean = true,
         val expectedActionType: String? = null,
         val requireHelpfulFollowUp: Boolean = false,
+        val visibleOptionsToMention: List<String> = emptyList(),
     )
 
     private data class Sample(
@@ -53,7 +54,11 @@ class LatencyProfileTest {
                                     (outcome.plan.actionType == case.expectedActionType &&
                                         !outcome.plan.instruction.contains("скрин", ignoreCase = true))) &&
                                 (!case.requireHelpfulFollowUp ||
-                                    HELPFUL_FOLLOW_UP.containsMatchIn(outcome.plan.instruction)),
+                                    HELPFUL_FOLLOW_UP.containsMatchIn(outcome.plan.instruction)) &&
+                                (case.visibleOptionsToMention.isEmpty() ||
+                                    case.visibleOptionsToMention.any {
+                                        outcome.plan.instruction.contains(it, ignoreCase = true)
+                                    }),
                             required = case.required,
                         )
                     )
@@ -85,6 +90,7 @@ class LatencyProfileTest {
             ),
             expectedActionType = "answer",
             requireHelpfulFollowUp = true,
+            visibleOptionsToMention = listOf("Настройки", "Профиль"),
         ),
         ProfileCase(
             id = "question",

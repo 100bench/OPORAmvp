@@ -65,7 +65,7 @@ class ScreenSafetyGateTest {
             snapshot(
                 element(text = "Куда поедем?", resourceId = "destination_input"),
                 element(
-                    text = "",
+                    text = "Map pin",
                     resourceId = "map_pin",
                     className = "ImageView",
                     editable = false,
@@ -77,9 +77,37 @@ class ScreenSafetyGateTest {
     }
 
     @Test
+    fun `unlabelled final action button remains a local handoff`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(element(
+                text = "",
+                resourceId = "pay_now_button",
+                className = "ImageButton",
+                editable = false,
+            ))
+        )
+
+        assertEquals(ScreenDisposition.SAFE_HANDOFF, assessment.disposition)
+        assertEquals(ScreenRiskCategory.FINAL_ACTION, assessment.category)
+    }
+
+    @Test
     fun `visible PIN input ID still pauses without a label`() {
         val assessment = ScreenSafetyGate.assess(
             snapshot(element(text = "", resourceId = "pin_input"))
+        )
+
+        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+    }
+
+    @Test
+    fun `plain visible PIN heading still pauses`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(element(
+                text = "Введите PIN",
+                className = "TextView",
+                editable = false,
+            ))
         )
 
         assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)

@@ -44,21 +44,22 @@ object ScreenSafetyGate {
             return pauseAuth()
         }
 
-        val rawLabels = visibleElements.asSequence().flatMap(::rawSafetyValues)
-        for (value in rawLabels) {
-            val normalized = value.lowercase(Locale.ROOT)
-            if (AUTHENTICATION.containsMatchIn(normalized)) return pauseAuth()
-            if (FINANCIAL.containsMatchIn(normalized)) {
-                return safeHandoff(
-                    ScreenRiskCategory.FINANCIAL,
-                    "На экране запрашиваются платёжные данные. Продолжите самостоятельно.",
-                )
-            }
-            if (FinalActionPolicy.isFinalAction(normalized)) {
-                return safeHandoff(
-                    ScreenRiskCategory.FINAL_ACTION,
-                    "Дальше возможно подтверждение заказа или оплаты. Проверьте всё и продолжите самостоятельно.",
-                )
+        for (element in visibleElements) {
+            for (value in rawSafetyValues(element)) {
+                val normalized = value.lowercase(Locale.ROOT)
+                if (isAuthenticationSignal(normalized, element)) return pauseAuth()
+                if (FINANCIAL.containsMatchIn(normalized)) {
+                    return safeHandoff(
+                        ScreenRiskCategory.FINANCIAL,
+                        "На экране запрашиваются платёжные данные. Продолжите самостоятельно.",
+                    )
+                }
+                if (FinalActionPolicy.isFinalAction(normalized)) {
+                    return safeHandoff(
+                        ScreenRiskCategory.FINAL_ACTION,
+                        "Дальше возможно подтверждение заказа или оплаты. Проверьте всё и продолжите самостоятельно.",
+                    )
+                }
             }
         }
 
@@ -73,10 +74,16 @@ object ScreenSafetyGate {
         element.text,
         element.contentDescription,
         element.hintText,
-        // A decorative map pin is not a PIN entry. An ID-only auth signal is
-        // meaningful when it belongs to a field the user can type into.
-        if (element.editable) element.resourceId else "",
+        element.resourceId,
     ).filter(String::isNotBlank)
+
+    private fun isAuthenticationSignal(value: String, element: ScreenElement): Boolean {
+        if (AUTHENTICATION.containsMatchIn(value)) return true
+        if (!PIN_TOKEN.containsMatchIn(value)) return false
+        // "Map pin" is a location marker, not a secret code. Keep a plain PIN
+        // label blocked, including on a non-editable heading or keypad.
+        return element.editable || !LOCATION_PIN.containsMatchIn(value)
+    }
 
     private fun pauseAuth() = ScreenSafetyAssessment(
         disposition = ScreenDisposition.PAUSE_AUTH,
@@ -104,8 +111,16 @@ object ScreenSafetyGate {
     }
 
     private val AUTHENTICATION = Regex(
-        "(?:^|[^\\p{L}\\p{N}])(?:otp|pin|парол(?:ь|я|ем)?|смс[- ]?код|код из смс|код подтверждения|биометри(?:я|и)|отпечат(?:ок|ка|ку|ком|ке) пальц(?:а|ем|е)|face ?id|fingerprint)(?:$|[^\\p{L}\\p{N}])",
+        "(?:^|[^\\p{L}\\p{N}])(?:otp|парол(?:ь|я|ем)?|смс[- ]?код|код из смс|код подтверждения|биометри(?:я|и)|отпечат(?:ок|ка|ку|ком|ке) пальц(?:а|ем|е)|face ?id|fingerprint)(?:$|[^\\p{L}\\p{N}])",
         setOf(RegexOption.IGNORE_CASE),
+    )
+    private val PIN_TOKEN = Regex(
+        "(?:^|[^\\p{L}\\p{N}])pin(?:$|[^\\p{L}\\p{N}])",
+        RegexOption.IGNORE_CASE,
+    )
+    private val LOCATION_PIN = Regex(
+        "(?:^|[^\\p{L}\\p{N}])(?:map|location|marker|карта|карты|адрес|точка)[_\\s-]+pin(?:$|[^\\p{L}\\p{N}])",
+        RegexOption.IGNORE_CASE,
     )
     private val FINANCIAL = Regex(
         "(?:^|[^\\p{L}\\p{N}])(?:cvv|cvc|номер карты|срок действия карты|данные карты|card number)(?:$|[^\\p{L}\\p{N}])",
