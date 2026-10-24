@@ -42,4 +42,3 @@
 - Regression tests now cover a visible address with hidden auth controls, `Map pin`, `source_pin` and `pin_slot`, an ID-only final payment button, and visible English/Russian PIN prompts. A `pin_slot` without both an enabled editable address field and a visible route marker remains blocked. All tests and the APK build pass.
 - On Samsung, the live address screen had two `address_input` fields. Temporary diagnostics identified two non-editable map controls, `source_pin` and `pin_slot`, as consecutive false auth triggers. No address value or raw tree was saved.
 - The final APK without diagnostics is installed. After the narrower safety review fix, a text request from the overlay on that same screen reached the existing Mac OpenAI proxy (HTTP 200) and moved to `GUIDING`, with no auth pause. ADB entered an English equivalent because its `input text` command did not accept Cyrillic; the user checks spoken wording separately.
-
