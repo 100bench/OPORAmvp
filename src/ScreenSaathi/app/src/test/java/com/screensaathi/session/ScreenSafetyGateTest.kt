@@ -102,15 +102,17 @@ class ScreenSafetyGateTest {
 
     @Test
     fun `plain visible PIN heading still pauses`() {
-        val assessment = ScreenSafetyGate.assess(
-            snapshot(element(
-                text = "Введите PIN",
-                className = "TextView",
-                editable = false,
-            ))
-        )
+        listOf("Введите PIN", "Введите ПИН-код").forEach { label ->
+            val assessment = ScreenSafetyGate.assess(
+                snapshot(element(
+                    text = label,
+                    className = "TextView",
+                    editable = false,
+                ))
+            )
 
-        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+            assertEquals(label, ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+        }
     }
 
     @Test

@@ -115,7 +115,7 @@ object ScreenSafetyGate {
         setOf(RegexOption.IGNORE_CASE),
     )
     private val PIN_TOKEN = Regex(
-        "(?:^|[^\\p{L}\\p{N}])pin(?:$|[^\\p{L}\\p{N}])",
+        "(?:^|[^\\p{L}\\p{N}])(?:pin|пин)(?:$|[^\\p{L}\\p{N}])",
         RegexOption.IGNORE_CASE,
     )
     private val LOCATION_PIN = Regex(
