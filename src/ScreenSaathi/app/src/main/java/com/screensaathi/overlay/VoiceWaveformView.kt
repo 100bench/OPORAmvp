@@ -159,7 +159,7 @@ class VoiceWaveformView(context: Context, attrs: AttributeSet? = null) : View(co
         const val RELEASE = 0.12f
         /** Never fully flat while active — a dead bar row looks like a bug. */
         const val MIN_BAR = 0.06f
-        val ACCENT_CORE = Color.parseColor("#FF8AB4F8")
-        val ACCENT_EDGE = Color.parseColor("#668AB4F8")
+        val ACCENT_CORE = Color.parseColor("#FF35C878")
+        val ACCENT_EDGE = Color.parseColor("#6635C878")
     }
 }

@@ -12,6 +12,11 @@ import android.graphics.Rect
  */
 object AssistantPlacement {
 
+    sealed interface Avoidance {
+        data class Move(val x: Int, val y: Int) : Avoidance
+        data object Collapse : Avoidance
+    }
+
     /** Distance from an edge, in px, within which a release docks to it. */
     fun snapMarginPx(density: Float): Int = (12f * density).toInt()
 
@@ -58,5 +63,47 @@ object AssistantPlacement {
         val bottom = y + h
         if (bottom <= imeTopPx - gapPx) return null
         return (imeTopPx - gapPx - h).coerceAtLeast(0)
+    }
+
+    /** Choose a visible, untouching card position or ask the renderer to collapse. */
+    fun avoidTarget(
+        preferredX: Int,
+        preferredY: Int,
+        width: Int,
+        height: Int,
+        safe: Rect,
+        target: Rect,
+        gap: Int,
+    ): Avoidance {
+        if (width <= 0 || height <= 0 || width > safe.right - safe.left ||
+            height > safe.bottom - safe.top
+        ) return Avoidance.Collapse
+
+        val preferred = clamp(preferredX, preferredY, width, height, safe)
+        fun clear(x: Int, y: Int): Boolean =
+            x + width <= target.left - gap || x >= target.right + gap ||
+                y + height <= target.top - gap || y >= target.bottom + gap
+
+        if (clear(preferred.first, preferred.second)) {
+            return Avoidance.Move(preferred.first, preferred.second)
+        }
+
+        val candidates = listOf(
+            preferredX to (target.top - gap - height),
+            preferredX to (target.bottom + gap),
+            (target.left - gap - width) to preferredY,
+            (target.right + gap) to preferredY,
+            safe.left to safe.top,
+            (safe.right - width) to safe.top,
+            safe.left to (safe.bottom - height),
+            (safe.right - width) to (safe.bottom - height),
+        ).map { (x, y) -> clamp(x, y, width, height, safe) }
+            .distinct()
+            .filter { (x, y) -> clear(x, y) }
+
+        val nearest = candidates.minByOrNull { (x, y) ->
+            kotlin.math.abs(x - preferred.first) + kotlin.math.abs(y - preferred.second)
+        } ?: return Avoidance.Collapse
+        return Avoidance.Move(nearest.first, nearest.second)
     }
 }

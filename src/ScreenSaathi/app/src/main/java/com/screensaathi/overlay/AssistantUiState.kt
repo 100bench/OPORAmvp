@@ -14,7 +14,7 @@ package com.screensaathi.overlay
  * still owns that, and drives this through PillState.
  */
 enum class AssistantUiState {
-    /** Dormant. Compact pill, no card, no waveform. A tap starts listening. */
+    /** Dormant mascot, no card or waveform. A tap opens the card. */
     COLLAPSED,
 
     /** Card open showing an instruction or response, no voice surface. */

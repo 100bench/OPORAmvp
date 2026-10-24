@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="OporaChoice">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingHorizontal">12dp</item>
+        <item name="android:paddingVertical">8dp</item>
+        <item name="android:background">@drawable/opora_secondary_bg</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">@color/opora_brand_strong</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="OporaSecondaryAction" parent="OporaChoice">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_weight">1</item>
+    </style>
+    <style name="OporaPrimaryAction" parent="OporaChoice">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:background">@drawable/opora_primary_bg</item>
+        <item name="android:textColor">@android:color/white</item>
+    </style>
+</resources>

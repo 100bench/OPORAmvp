@@ -23,9 +23,11 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.screensaathi.overlay.AssistantUiState
+import com.screensaathi.overlay.AssistantPresentation
 import com.screensaathi.overlay.DecisionButtons
 import com.screensaathi.overlay.DecisionChoice
 import com.screensaathi.overlay.HighlightView
@@ -51,10 +53,10 @@ class OverlayService : Service() {
 
     private lateinit var highlightView: HighlightView
     private lateinit var pillRoot: View
-    private lateinit var cardBody: LinearLayout
+    private lateinit var cardBody: ScrollView
+    private lateinit var cardContent: LinearLayout
     private lateinit var pillLabel: TextView
     private lateinit var instructionText: TextView
-    private lateinit var stateDot: com.screensaathi.overlay.StateOrbView
     private lateinit var micButton: View
     private lateinit var transportRow: View
     private lateinit var waveform: com.screensaathi.overlay.VoiceWaveformView
@@ -66,8 +68,12 @@ class OverlayService : Service() {
     private lateinit var decisionPrimaryButton: TextView
     private lateinit var decisionSecondaryButton: TextView
     private lateinit var textCommand: EditText
+    private lateinit var textCommandRow: View
+    private lateinit var voiceSlot: View
+    private lateinit var removalPrompt: View
 
     private var expanded = false
+    private var presentation = AssistantPresentation()
     private var debugVisible = false
     private var voiceActive = false
     private var levelPump: Runnable? = null
@@ -184,14 +190,17 @@ class OverlayService : Service() {
     private fun addPillWindow() {
         pillRoot = LayoutInflater.from(this).inflate(R.layout.overlay_pill, null)
         cardBody = pillRoot.findViewById(R.id.card_body)
+        cardContent = pillRoot.findViewById(R.id.card_content)
         pillLabel = pillRoot.findViewById(R.id.pill_label)
         instructionText = pillRoot.findViewById(R.id.instruction_text)
-        stateDot = pillRoot.findViewById(R.id.state_dot)
         micButton = pillRoot.findViewById(R.id.mic_button)
         transportRow = pillRoot.findViewById(R.id.transport_row)
         waveform = pillRoot.findViewById(R.id.waveform)
         minimizedDot = pillRoot.findViewById(R.id.minimized_dot)
-        minimizedDot.setOnClickListener { setMinimized(false) }
+        minimizedDot.setOnClickListener {
+            setMinimized(false)
+            toggleCard()
+        }
         languageChip = pillRoot.findViewById(R.id.language_chip)
         debugPanel = pillRoot.findViewById(R.id.debug_panel)
         choiceRow = pillRoot.findViewById(R.id.choice_row)
@@ -210,6 +219,15 @@ class OverlayService : Service() {
             controller.onDecisionTapped(DecisionChoice.SECONDARY)
         }
         textCommand = pillRoot.findViewById(R.id.text_command)
+        textCommandRow = pillRoot.findViewById(R.id.text_command_row)
+        voiceSlot = pillRoot.findViewById(R.id.voice_slot)
+        removalPrompt = pillRoot.findViewById(R.id.removal_prompt)
+        pillRoot.findViewById<View>(R.id.removal_cancel_button).setOnClickListener {
+            cancelRemovalPrompt()
+        }
+        pillRoot.findViewById<View>(R.id.removal_confirm_button).setOnClickListener {
+            confirmRemoval()
+        }
         textCommand.setOnClickListener { focusTextInput() }
         textCommand.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
@@ -221,22 +239,21 @@ class OverlayService : Service() {
             submitTextCommand()
         }
 
-        // The collapsed pill IS the talk control. It used to only expand the
-        // card, which left the mic two taps deep and invisible until the
-        // first one — a judge looking at the idle assistant could not tell
-        // how to speak to it. startListening() expands the card itself, so
-        // one tap goes straight from dormant to listening, and a second tap
-        // (now on the waveform) ends the turn.
-        pillRoot.findViewById<View>(R.id.pill_row).setOnClickListener { controller.onMicTapped() }
+        // The mascot opens the compact card. The mic remains visible inside;
+        // tapping the mascot never starts an unintended recording.
+        pillRoot.findViewById<View>(R.id.pill_row).setOnClickListener { toggleCard() }
         pillRoot.findViewById<View>(R.id.pill_row).setOnLongClickListener {
+            requestRemovalPrompt()
+            true
+        }
+        pillLabel.setOnLongClickListener {
             debugVisible = !debugVisible
             debugPanel.visibility = if (debugVisible) View.VISIBLE else View.GONE
             true
         }
         micButton.setOnClickListener { controller.onMicTapped() }
-        // Circle mode. Long-press on the *mic*, not the pill row — that one is
-        // already the debug panel (docs/PARKING_LOT.md calls it the real triage
-        // tool), and taking it would trade a working diagnostic for a feature.
+        // Circle-selection mode stays on the expanded mic. The mascot's long
+        // press is reserved for confirmed removal; diagnostics use the header.
         micButton.setOnLongClickListener {
             enterSelectionMode()
             true
@@ -246,17 +263,12 @@ class OverlayService : Service() {
         waveform.setOnClickListener { controller.onMicTapped() }
         pillRoot.findViewById<View>(R.id.next_button).setOnClickListener { controller.onNextTapped() }
         pillRoot.findViewById<View>(R.id.stop_button).setOnClickListener { controller.onStopTapped() }
-        pillRoot.findViewById<View>(R.id.close_button).setOnClickListener { stopSelf() }
+        pillRoot.findViewById<View>(R.id.close_button).setOnClickListener { toggleCard() }
 
         val lp = WindowManager.LayoutParams(
-            // FIXED width, not WRAP_CONTENT. With wrap, the WindowManager
-            // frame was a function of the instruction text — a longer
-            // sentence, or the same sentence in Tamil, silently moved the
-            // window's left edge and every control inside it. The mic then
-            // sat somewhere other than where it had just been drawn. Pinning
-            // the outer frame means content changes animate *inside* a
-            // stationary window and the touch region never moves.
-            dp(PILL_WIDTH_DP),
+            // Explicit width follows the presentation, so text cannot resize
+            // the frame and the collapsed mascot intercepts only 96dp.
+            dp(presentation.windowWidthDp),
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType(),
             // Not focusable, so the keyboard on the screen underneath still works,
@@ -280,6 +292,18 @@ class OverlayService : Service() {
         pillRoot.post { restToDefaultPosition() }
         installDragHandling()
         installInsetHandling()
+        pillRoot.addOnLayoutChangeListener { _, left, top, right, bottom,
+                                            oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                pillRoot.post { repositionForCurrentScreen() }
+            }
+        }
+        cardContent.addOnLayoutChangeListener { _, left, top, right, bottom,
+                                                oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                pillRoot.post { repositionForCurrentScreen() }
+            }
+        }
     }
 
     /** Usable area: the display minus system bars, cutout and (when up) the IME. */
@@ -315,16 +339,16 @@ class OverlayService : Service() {
     private fun imeTop(): Int = ScreenReaderService.instance?.imeTopPx() ?: 0
 
     private fun windowSize(): Pair<Int, Int> {
-        val w = if (pillRoot.width > 0) pillRoot.width else dp(PILL_WIDTH_DP)
+        val w = pillParams?.width ?: desiredWindowWidth(expanded)
         val h = if (pillRoot.height > 0) pillRoot.height else dp(96)
         return w to h
     }
 
-    /** Bottom-centre, the resting place before the user moves it. */
+    /** Bottom-right, matching the reference bubble before the user moves it. */
     private fun restToDefaultPosition() {
         val (w, h) = windowSize()
         val safe = safeArea()
-        userX = safe.left + (safe.width() - w) / 2
+        userX = safe.right - w - dp(20)
         userY = safe.bottom - h - dp(28)
         applyPosition(userX, userY, respectKeyboard = true)
     }
@@ -339,16 +363,8 @@ class OverlayService : Service() {
     private fun applyPosition(x: Int, y: Int, respectKeyboard: Boolean) {
         val lp = pillParams ?: return
         val (w, h) = windowSize()
-        val safe = safeArea()
-        var (cx, cy) = com.screensaathi.overlay.AssistantPlacement.clamp(x, y, w, h, safe)
-        if (respectKeyboard) {
-            com.screensaathi.overlay.AssistantPlacement
-                .avoidKeyboard(cy, h, imeTop(), dp(12))
-                ?.let { lifted ->
-                    cy = com.screensaathi.overlay.AssistantPlacement
-                        .clamp(cx, lifted, w, h, safe).second
-                }
-        }
+        val safe = if (respectKeyboard) currentSafeArea() else safeArea()
+        val (cx, cy) = com.screensaathi.overlay.AssistantPlacement.clamp(x, y, w, h, safe)
         lp.x = cx
         lp.y = cy
         runCatching { wm.updateViewLayout(pillRoot, lp) }
@@ -369,18 +385,52 @@ class OverlayService : Service() {
      */
     private fun installInsetHandling() {
         pillRoot.setOnApplyWindowInsetsListener { _, insets ->
-            pillRoot.post { applyPosition(userX, userY, respectKeyboard = true) }
+            pillRoot.post { repositionForCurrentScreen() }
             insets
         }
+    }
+
+    private fun currentSafeArea(): Rect = safeArea().apply {
+        val keyboardTop = imeTop()
+        if (keyboardTop > 0) bottom = minOf(bottom, keyboardTop - dp(12)).coerceAtLeast(top)
+    }
+
+    private fun desiredWindowWidth(open: Boolean): Int = minOf(
+        dp(if (open) AssistantPresentation.CARD_WIDTH_DP else AssistantPresentation.CIRCLE_WIDTH_DP),
+        safeArea().width().coerceAtLeast(1),
+    )
+
+    /** The card scrolls when large text or the keyboard leaves less room. */
+    private fun limitCardHeight() {
+        if (!expanded || cardBody.visibility != View.VISIBLE) return
+        val natural = cardContent.measuredHeight + cardBody.paddingTop + cardBody.paddingBottom
+        if (natural <= 0) return
+        val available = currentSafeArea().height().coerceAtLeast(1)
+        val desired = minOf(natural, available)
+        val lp = cardBody.layoutParams
+        if (lp.height != desired) {
+            lp.height = desired
+            cardBody.layoutParams = lp
+        }
+    }
+
+    private fun repositionForCurrentScreen() {
+        if (uiState == AssistantUiState.DRAGGING) return
+        limitCardHeight()
+        val params = pillParams
+        applyPosition(
+            if (avoidingHighlight) params?.x ?: userX else userX,
+            if (avoidingHighlight) params?.y ?: userY else userY,
+            respectKeyboard = true,
+        )
+        if (!presentation.removalPending) presentation.command.highlight?.let(::moveCardAwayFrom)
     }
 
     /**
      * Drag the whole window, and tell a drag apart from a tap.
      *
-     * The distinction is the point: without a slop threshold every attempt to
-     * move the assistant also opened the microphone. Below slop it is a tap
-     * (start listening); above it the window follows the finger and the tap is
-     * suppressed entirely.
+     * Below slop a tap toggles the card; above it the window follows the finger
+     * and the tap is suppressed entirely.
      */
     private fun installDragHandling() {
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
@@ -437,6 +487,7 @@ class OverlayService : Service() {
                         userY = lp.y
                         uiState = stateBeforeDrag
                         animateToX(snapped)
+                        pillRoot.post { setExpanded(presentation.cardVisible) }
                         return true
                     }
                 }
@@ -450,7 +501,7 @@ class OverlayService : Service() {
         // refused to move. The root always covers the window.
         pillRoot.setOnTouchListener(listener)
         pillRoot.findViewById<View>(R.id.pill_row).setOnTouchListener(listener)
-        cardBody.setOnTouchListener(listener)
+        // The card's content scrolls at large font sizes; drag it by the mascot.
     }
 
     /** Slide to the docked x rather than teleporting there on release. */
@@ -467,11 +518,12 @@ class OverlayService : Service() {
         }
     }
 
-    /** Park the assistant as a dot so the app underneath is usable. */
+    /** Park the assistant as the mascot so the app underneath is usable. */
     fun setMinimized(minimized: Boolean) {
         if (minimized && uiState == AssistantUiState.MINIMIZED) return
         uiState = if (minimized) AssistantUiState.MINIMIZED else AssistantUiState.COLLAPSED
-        cardBody.visibility = View.GONE
+        presentation = presentation.hide()
+        setExpanded(false)
         pillRoot.findViewById<View>(R.id.pill_row).visibility =
             if (minimized) View.GONE else View.VISIBLE
         minimizedDot.visibility = if (minimized) View.VISIBLE else View.GONE
@@ -605,20 +657,7 @@ class OverlayService : Service() {
     // --- Rendering (the whole job of this class) ------------------------------
 
     private fun render(cmd: OverlayCommand) {
-        // Ported from Tappr's StateSignalView usage: the orb's mode carries
-        // the state signal now, not a tinted dot's color alone.
-        val orbMode = when (cmd.pillState) {
-            PillState.IDLE -> com.screensaathi.overlay.StateOrbView.Mode.IDLE
-            PillState.LISTENING -> com.screensaathi.overlay.StateOrbView.Mode.LISTENING
-            PillState.THINKING -> com.screensaathi.overlay.StateOrbView.Mode.THINKING
-            PillState.SPEAKING -> com.screensaathi.overlay.StateOrbView.Mode.SPEAKING
-            // Guiding is a settled, look-at-the-highlight state — motion here
-            // would compete with the ring for attention, so it rests on the
-            // same static frame as IDLE.
-            PillState.GUIDING -> com.screensaathi.overlay.StateOrbView.Mode.IDLE
-            PillState.ERROR -> com.screensaathi.overlay.StateOrbView.Mode.ERROR
-        }
-        stateDot.setMode(orbMode)
+        presentation = presentation.accept(cmd)
 
         // The voice surface. Exactly one of {transport row, waveform} is ever
         // visible, so the mic and the wave can never read as two competing
@@ -655,8 +694,10 @@ class OverlayService : Service() {
         cmd.instruction?.let { instructionText.text = it }
         renderChoices(cmd.choices)
         renderDecision(cmd.decisionButtons)
+        renderRemovalPrompt()
 
-        if (cmd.expanded != expanded) setExpanded(cmd.expanded)
+        setExpanded(presentation.cardVisible && uiState != AssistantUiState.MINIMIZED)
+        pillRoot.post { repositionForCurrentScreen() }
 
         // Keep the cursor's launch point under the pill, so it always flies out
         // of the assistant rather than appearing from nowhere.
@@ -678,32 +719,41 @@ class OverlayService : Service() {
     }
 
     private fun moveCardAwayFrom(target: com.screensaathi.overlay.HighlightBounds) {
+        if (presentation.removalPending) {
+            highlightView.clear()
+            return
+        }
         val lp = pillParams ?: return
         val (width, height) = windowSize()
         if (width <= 0 || height <= 0) return
 
         val margin = dp(12)
-        val card = Rect(lp.x, lp.y, lp.x + width, lp.y + height)
-        val guardedTarget = Rect(
-            target.left - margin,
-            target.top - margin,
-            target.right + margin,
-            target.bottom + margin,
-        )
-        if (!Rect.intersects(card, guardedTarget)) return
-
-        val safe = safeArea()
-        val above = guardedTarget.top - height
-        val below = guardedTarget.bottom
-        val nextY = when {
-            above >= safe.top -> above
-            below + height <= safe.bottom -> below
-            else -> if (target.top > safe.centerY()) safe.top else safe.bottom - height
-        }.coerceIn(safe.top, (safe.bottom - height).coerceAtLeast(safe.top))
-
-        lp.y = nextY
-        wm.updateViewLayout(pillRoot, lp)
-        avoidingHighlight = true
+        val screenSafe = safeArea()
+        val keyboardTop = imeTop()
+        val safe = if (keyboardTop > 0) {
+            Rect(screenSafe.left, screenSafe.top, screenSafe.right,
+                minOf(screenSafe.bottom, keyboardTop - margin).coerceAtLeast(screenSafe.top))
+        } else screenSafe
+        val bounds = Rect(target.left, target.top, target.right, target.bottom)
+        when (val placement = com.screensaathi.overlay.AssistantPlacement.avoidTarget(
+            lp.x, lp.y, width, height, safe, bounds, margin,
+        )) {
+            is com.screensaathi.overlay.AssistantPlacement.Avoidance.Move -> {
+                if (lp.x != placement.x || lp.y != placement.y) {
+                    lp.x = placement.x
+                    lp.y = placement.y
+                    wm.updateViewLayout(pillRoot, lp)
+                    avoidingHighlight = true
+                }
+            }
+            com.screensaathi.overlay.AssistantPlacement.Avoidance.Collapse -> {
+                if (expanded) {
+                    presentation = presentation.hide()
+                    setExpanded(false)
+                    pillRoot.post { moveCardAwayFrom(target) }
+                }
+            }
+        }
     }
 
     /**
@@ -767,14 +817,73 @@ class OverlayService : Service() {
         debugPanel.text = text
     }
 
-    private fun toggleExpanded() = setExpanded(!expanded)
+    private fun toggleCard() {
+        if (presentation.removalPending) {
+            cancelRemovalPrompt()
+            return
+        }
+        presentation = presentation.toggle()
+        uiState = if (presentation.cardVisible) AssistantUiState.EXPANDED
+            else AssistantUiState.COLLAPSED
+        setExpanded(presentation.cardVisible)
+        presentation.command.highlight?.let { target ->
+            pillRoot.post { moveCardAwayFrom(target) }
+        }
+    }
+
+    private fun requestRemovalPrompt() {
+        presentation = presentation.requestRemoval()
+        highlightView.clear()
+        setExpanded(true)
+        renderRemovalPrompt()
+    }
+
+    private fun cancelRemovalPrompt() {
+        presentation = presentation.cancelRemoval()
+        render(presentation.command)
+    }
+
+    private fun confirmRemoval() {
+        if (!presentation.canConfirmRemoval) return
+        controller.onStopTapped()
+        main.post { stopSelf() }
+    }
+
+    private fun renderRemovalPrompt() {
+        val pending = presentation.removalPending
+        removalPrompt.visibility = if (pending) View.VISIBLE else View.GONE
+        instructionText.visibility = if (pending) View.GONE else View.VISIBLE
+        textCommandRow.visibility = if (pending) View.GONE else View.VISIBLE
+        voiceSlot.visibility = if (pending) View.GONE else View.VISIBLE
+        debugPanel.visibility = if (!pending && debugVisible) View.VISIBLE else View.GONE
+        if (pending) {
+            choiceRow.visibility = View.GONE
+            decisionRow.visibility = View.GONE
+        }
+    }
 
     private fun setExpanded(value: Boolean) {
+        if (uiState == AssistantUiState.DRAGGING) return
+        val width = desiredWindowWidth(value)
+        if (expanded == value && cardBody.visibility == (if (value) View.VISIBLE else View.GONE) &&
+            pillParams?.width == width
+        ) return
         expanded = value
         cardBody.visibility = if (value) View.VISIBLE else View.GONE
-        // Exactly one state indicator on screen at a time: the 52dp mic orb
-        // when expanded, the 18dp collapsed dot otherwise — never both.
-        stateDot.visibility = if (value) View.GONE else View.VISIBLE
+        pillParams?.let { params ->
+            if (params.width != width) {
+                val delta = params.width - width
+                val nextX = params.x + delta
+                params.width = width
+                params.x = nextX
+                userX += delta
+                wm.updateViewLayout(pillRoot, params)
+            }
+        }
+        pillRoot.post {
+            repositionForCurrentScreen()
+            publishHomePosition()
+        }
     }
 
     // --- Foreground plumbing --------------------------------------------------
@@ -844,11 +953,9 @@ class OverlayService : Service() {
          */
         fun onSystemWindowsChanged() {
             val svc = live ?: return
-            svc.main.post { svc.applyPosition(svc.userX, svc.userY, respectKeyboard = true) }
+            svc.main.post { svc.repositionForCurrentScreen() }
         }
 
-        /** Fixed outer overlay width — see the LayoutParams comment. */
-        private const val PILL_WIDTH_DP = 320
         private const val TRANSITION_MS = 220L
         private const val DOCK_MS = 180L
         private const val TAG_UI = "AssistantUI"
