@@ -73,9 +73,12 @@ class OverlayService : Service() {
     private lateinit var removalPrompt: View
 
     private var expanded = false
+    private var expansionRequestedDuringDrag: Boolean? = null
     private var presentation = AssistantPresentation()
     private var debugVisible = false
     private var voiceActive = false
+    private var textInputActive = false
+    private var textInputSawKeyboard = false
     private var levelPump: Runnable? = null
 
     /** Single source of truth for presentation — see AssistantUiState. */
@@ -229,6 +232,16 @@ class OverlayService : Service() {
             confirmRemoval()
         }
         textCommand.setOnClickListener { focusTextInput() }
+        textCommand.setOnTouchListener { _, event ->
+            if (event.actionMasked == android.view.MotionEvent.ACTION_UP &&
+                ((pillParams?.flags ?: 0) and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0
+            ) {
+                // EditText consumes its first tap while this overlay cannot
+                // take focus. Handle that tap before its normal click path.
+                focusTextInput()
+                true
+            } else false
+        }
         textCommand.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
                 submitTextCommand()
@@ -416,6 +429,10 @@ class OverlayService : Service() {
 
     private fun repositionForCurrentScreen() {
         if (uiState == AssistantUiState.DRAGGING) return
+        if (textInputActive) {
+            if (imeTop() > 0) textInputSawKeyboard = true
+            else if (textInputSawKeyboard) releaseTextInputFocus()
+        }
         limitCardHeight()
         val params = pillParams
         applyPosition(
@@ -487,7 +504,10 @@ class OverlayService : Service() {
                         userY = lp.y
                         uiState = stateBeforeDrag
                         animateToX(snapped)
-                        pillRoot.post { setExpanded(presentation.cardVisible) }
+                        expansionRequestedDuringDrag?.let { requested ->
+                            expansionRequestedDuringDrag = null
+                            pillRoot.post { setExpanded(requested) }
+                        }
                         return true
                     }
                 }
@@ -779,25 +799,43 @@ class OverlayService : Service() {
 
     private fun focusTextInput() {
         val lp = pillParams ?: return
+        if (!textInputActive) {
+            textInputActive = true
+            textInputSawKeyboard = false
+        }
         lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         wm.updateViewLayout(pillRoot, lp)
         textCommand.requestFocus()
-        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-            .showSoftInput(textCommand, InputMethodManager.SHOW_IMPLICIT)
+        // Window focus changes asynchronously after FLAG_NOT_FOCUSABLE is
+        // cleared. An immediate showSoftInput is ignored on Samsung and the
+        // user otherwise has to tap the field twice.
+        textCommand.postDelayed({
+            if (textInputActive && presentation.cardVisible && textCommand.isAttachedToWindow) {
+                textCommand.requestFocus()
+                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                    .showSoftInput(textCommand, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }, 180L)
+    }
+
+    private fun releaseTextInputFocus() {
+        textInputActive = false
+        textInputSawKeyboard = false
+        textCommand.clearFocus()
+        pillParams?.let { lp ->
+            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            wm.updateViewLayout(pillRoot, lp)
+        }
     }
 
     private fun submitTextCommand() {
         val text = textCommand.text.toString().trim()
         if (text.isBlank()) return
         textCommand.setText("")
-        textCommand.clearFocus()
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(textCommand.windowToken, 0)
-        pillParams?.let { lp ->
-            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            wm.updateViewLayout(pillRoot, lp)
-        }
+        releaseTextInputFocus()
         controller.onTextSubmitted(text)
     }
 
@@ -823,6 +861,11 @@ class OverlayService : Service() {
             return
         }
         presentation = presentation.toggle()
+        if (!presentation.cardVisible && textInputActive) {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                .hideSoftInputFromWindow(textCommand.windowToken, 0)
+            releaseTextInputFocus()
+        }
         uiState = if (presentation.cardVisible) AssistantUiState.EXPANDED
             else AssistantUiState.COLLAPSED
         setExpanded(presentation.cardVisible)
@@ -832,6 +875,14 @@ class OverlayService : Service() {
     }
 
     private fun requestRemovalPrompt() {
+        // A drag can last longer than Android's long-press timeout. The
+        // moving mascot must not turn into a confirmation card on release.
+        if (uiState == AssistantUiState.DRAGGING) return
+        if (textInputActive) {
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                .hideSoftInputFromWindow(textCommand.windowToken, 0)
+            releaseTextInputFocus()
+        }
         presentation = presentation.requestRemoval()
         highlightView.clear()
         setExpanded(true)
@@ -863,13 +914,18 @@ class OverlayService : Service() {
     }
 
     private fun setExpanded(value: Boolean) {
-        if (uiState == AssistantUiState.DRAGGING) return
+        if (uiState == AssistantUiState.DRAGGING) {
+            expansionRequestedDuringDrag = value
+            return
+        }
         val width = desiredWindowWidth(value)
         if (expanded == value && cardBody.visibility == (if (value) View.VISIBLE else View.GONE) &&
             pillParams?.width == width
         ) return
         expanded = value
         cardBody.visibility = if (value) View.VISIBLE else View.GONE
+        pillRoot.findViewById<View>(R.id.pill_row).contentDescription =
+            if (value) "Свернуть Опору" else "Открыть Опору"
         pillParams?.let { params ->
             if (params.width != width) {
                 val delta = params.width - width

@@ -69,3 +69,11 @@
 - [ ] Check circle/card touch footprint with `dumpsys window`, dragging, keyboard, system bars, large font and a highlighted target near the circle on Samsung; use UI tree, no screenshots.
 - [ ] Run `testDebugUnitTest`, `assembleDebug`, a clean-clone `assembleDebug`, and `git diff --check`.
 - [ ] Remove temporary diagnostics and commit the verified task 5 changes separately from task 4.
+
+### Measured outcome (Samsung, 2026-10-24)
+
+- The closed mascot used a 270 × 270 px (96 dp) touch window; the opened card used 973 px (346 dp) width. Taps outside the circle reached the app below it. Tapping the mascot opened and closed the card; dragging it in either state preserved the intended size.
+- A long press opened removal confirmation. Cancel restored the circle; confirm stopped `OverlayService`, and a later app launch restored it.
+- The text field opened the keyboard on the first tap. At keyboard top 1362 px, the 938 px card moved to y=391 px and ended at y=1329 px. After Back it returned to y=1215 px and restored `FLAG_NOT_FOCUSABLE` so UI-tree reading could see the app beneath again.
+- For a measured button at `[79,2089][1001,2153]`, the card moved from y=1215 to y=1118 px, leaving a 33 px gap. At temporary system font scale 1.5 the card remained within the display and resized for extra content; the previous scale 1.1 was restored.
+- Unit tests and `assembleDebug` passed; temporary geometry broadcasts and logs were removed. The clean-clone build and final install were checked on the combined branch.

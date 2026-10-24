@@ -257,6 +257,7 @@
         android:layout_gravity="top|end"
         android:clickable="true"
         android:contentDescription="Открыть Опору"
+        android:elevation="16dp"
         android:focusable="true"
         android:scaleType="fitCenter"
         android:src="@drawable/opora_mascot" />

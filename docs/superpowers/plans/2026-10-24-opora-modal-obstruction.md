@@ -68,3 +68,10 @@
 - [ ] Install on Samsung. Check a tree-readable popup in Лавка and the original prizes popup if it can be reopened. Verify the close control is highlighted only when unambiguous, otherwise there is no ring and no scroll instruction.
 - [ ] Have the person close the popup; verify the same goal replans on the newly visible screen. Do not perform the tap on their behalf during acceptance.
 - [ ] Run `testDebugUnitTest`, `assembleDebug`, clean-clone `assembleDebug`, and `git diff --check`; remove diagnostics and commit this task separately.
+
+### Measured outcome (Samsung, 2026-10-24)
+
+- The Лавка prizes popup no longer appeared during acceptance; its exact controls remain unverified.
+- A native AppCompat dialog on the same Samsung had a partial-screen `FrameLayout` root, `parentPanel`, `alertTitle`, `buttonPanel` and 11 dialog descendants. Its ordinary dismissal button produced `WAITING_FOR_MODAL_DISMISS` with no ring and no scroll instruction. After closing it, the original goal returned to analysis automatically.
+- In a temporary test variant, the same dialog had one explicit `Закрыть` button. The UI-tree branch emitted `ShowGuidance` with a ring, then resumed the goal after that button was pressed. Temporary button text, diagnostic broadcast and diagnostic logs were removed before the final build.
+- Unit tests and `assembleDebug` passed. The combined branch was also built from a clean local clone without transferring an API key.
