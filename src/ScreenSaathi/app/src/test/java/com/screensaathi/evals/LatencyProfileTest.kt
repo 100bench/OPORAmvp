@@ -17,6 +17,8 @@ class LatencyProfileTest {
         val goal: String,
         val screen: PlannerScreen,
         val required: Boolean = true,
+        val expectedActionType: String? = null,
+        val requireHelpfulFollowUp: Boolean = false,
     )
 
     private data class Sample(
@@ -46,7 +48,12 @@ class LatencyProfileTest {
                         Sample(
                             caseId = case.id,
                             totalMs = (System.nanoTime() - started) / 1_000_000,
-                            succeeded = outcome is PlannerOutcome.Success,
+                            succeeded = outcome is PlannerOutcome.Success &&
+                                (case.expectedActionType == null ||
+                                    (outcome.plan.actionType == case.expectedActionType &&
+                                        !outcome.plan.instruction.contains("скрин", ignoreCase = true))) &&
+                                (!case.requireHelpfulFollowUp ||
+                                    HELPFUL_FOLLOW_UP.containsMatchIn(outcome.plan.instruction)),
                             required = case.required,
                         )
                     )
@@ -56,18 +63,29 @@ class LatencyProfileTest {
 
         assertEquals(cases.size * repeats, samples.size)
         val required = samples.filter(Sample::required)
+        report(samples, repeats)
         assertTrue(
-            "every required live question and guide call must succeed",
+            "required live cases failed: ${required.filterNot(Sample::succeeded).map(Sample::caseId)}",
             required.isNotEmpty() && required.all(Sample::succeeded),
         )
         assertTrue(
             "required production planner p95 must stay within 10 seconds",
             percentile(required.map(Sample::totalMs).sorted(), 95.0) <= 10_000L,
         )
-        report(samples, repeats)
     }
 
     private fun profileCases() = listOf(
+        ProfileCase(
+            id = "question_screen",
+            goal = "Что находится на экране?",
+            screen = screen(
+                "example.app",
+                element(0, "settings", "Настройки"),
+                element(1, "profile", "Профиль"),
+            ),
+            expectedActionType = "answer",
+            requireHelpfulFollowUp = true,
+        ),
         ProfileCase(
             id = "question",
             goal = "Где история поездок?",
@@ -136,4 +154,8 @@ class LatencyProfileTest {
 
     private fun percentile(sorted: List<Long>, p: Double): Long =
         sorted[(ceil(p / 100.0 * sorted.size).toInt() - 1).coerceIn(0, sorted.lastIndex)]
+
+    companion object {
+        private val HELPFUL_FOLLOW_UP = Regex("помог|подскаж|скажите, что", RegexOption.IGNORE_CASE)
+    }
 }
