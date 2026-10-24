@@ -2,6 +2,7 @@ package com.screensaathi.sarvam
 
 import android.content.Context
 import android.util.Log
+import com.screensaathi.screen.PlannerElement
 import com.screensaathi.screen.PlannerScreen
 import com.screensaathi.screen.ScreenSanitizer
 import com.screensaathi.screen.ScreenSnapshot
@@ -251,7 +252,13 @@ class SarvamPlanner private constructor(
                 "AI-планировщик временно недоступен.",
             )
         }
-        return parseGuidanceOutcome(response.body, goal)
+        val visibleLabels = screen.elements.flatMap { element ->
+            listOfNotNull(element.label, element.description)
+        }
+        val groundedTerms = visibleLabels + visibleLabels.flatMap { label ->
+            LATIN_TERM.findAll(label).map(MatchResult::value).toList()
+        }
+        return parseGuidanceOutcome(response.body, goal, groundedTerms)
     }
 
     private fun buildGuidancePayload(
@@ -269,7 +276,7 @@ class SarvamPlanner private constructor(
                     .append(lastSafeInstruction.trim()).append('\n')
             }
             if (repairFormat) {
-                append("repair_format: true; верните ровно один валидный tool-call.\n")
+                append("repair_format: true; верните ровно один валидный tool-call. Для guide укажите только resource_id, дословно присутствующий в Elements; если у цели нет id, укажите точный видимый текст подписи в target.text. Не придумывайте id.\n")
             }
             append('\n').append(screen.toPromptText())
         }
@@ -281,7 +288,7 @@ class SarvamPlanner private constructor(
                     .put(JSONObject().put("role", "developer").put("content", systemPrompt))
                     .put(JSONObject().put("role", "user").put("content", userContent)),
             )
-            .put("tools", JSONArray().put(toolSpecGuidance()))
+            .put("tools", JSONArray().put(toolSpecGuidance(screen)))
             .put("tool_choice", "required")
             .put("parallel_tool_calls", false)
             .put("reasoning_effort", "none")
@@ -290,7 +297,29 @@ class SarvamPlanner private constructor(
             .toString()
     }
 
-    private fun toolSpecGuidance(): JSONObject {
+    private fun toolSpecGuidance(screen: PlannerScreen): JSONObject {
+        val actionableIds = screen.elements.asSequence()
+            .filter { it.enabled && (it.editable || it.clickable) }
+            .mapNotNull(PlannerElement::resourceId)
+            .filter(String::isNotBlank)
+            .distinct()
+            .toList()
+        val visibleLabels = screen.elements.asSequence()
+            .flatMap { sequenceOf(it.label, it.description) }
+            .filterNotNull()
+            .filter { it.isNotBlank() && it.length <= MAX_TARGET_LABEL_LENGTH }
+            .distinct()
+            .toList()
+        fun targetString(choices: List<String>): JSONObject = JSONObject()
+            .put("type", "string")
+            .apply {
+                if (choices.size <= MAX_TARGET_CHOICES) {
+                    put("enum", JSONArray().apply {
+                        put("")
+                        choices.forEach(::put)
+                    })
+                }
+            }
         val params = JSONObject()
             .put("type", "object")
             .put(
@@ -307,8 +336,8 @@ class SarvamPlanner private constructor(
                         JSONObject().put("type", "object").put(
                             "properties",
                             JSONObject()
-                                .put("resource_id", JSONObject().put("type", "string"))
-                                .put("text", JSONObject().put("type", "string")),
+                                .put("resource_id", targetString(actionableIds))
+                                .put("text", targetString(visibleLabels)),
                         ).put("additionalProperties", false),
                     )
                     .put(
@@ -417,7 +446,11 @@ class SarvamPlanner private constructor(
             return (parseGuidanceOutcome(raw, transcript) as? PlannerOutcome.Success)?.plan
         }
 
-        fun parseGuidanceOutcome(raw: String, goal: String): PlannerOutcome {
+        fun parseGuidanceOutcome(
+            raw: String,
+            goal: String,
+            groundedLabels: List<String> = emptyList(),
+        ): PlannerOutcome {
             val args = runCatching {
                 val choices = JSONObject(raw).optJSONArray("choices")
                     ?: return@runCatching null
@@ -456,7 +489,7 @@ class SarvamPlanner private constructor(
 
             val claimedLanguage = args.opt("language") as? String ?: return invalidGuidance()
             if (claimedLanguage != Language.APP_DEFAULT ||
-                !Language.isRussianText(instruction, listOf(targetText))
+                !Language.isRussianText(instruction, groundedLabels + targetText)
             ) return invalidGuidance()
             val confidence = (args.opt("confidence") as? Number)?.toDouble()
                 ?: return invalidGuidance()
@@ -505,6 +538,9 @@ class SarvamPlanner private constructor(
             "is_done", "action_type", "instruction", "language", "confidence", "reason",
         )
         private val TARGET_KEYS = setOf("resource_id", "text")
+        private const val MAX_TARGET_CHOICES = 64
+        private const val MAX_TARGET_LABEL_LENGTH = 100
+        private val LATIN_TERM = Regex("[A-Za-z][A-Za-z0-9_-]*")
 
         private fun JSONObject.hasOnlyKeys(allowed: Set<String>): Boolean =
             keys().asSequence().all(allowed::contains)

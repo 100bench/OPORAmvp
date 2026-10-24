@@ -160,6 +160,66 @@ class GuidancePlannerTest {
         assertEquals(listOf("guide", "answer"), (0 until actionTypes.length()).map(actionTypes::getString))
     }
 
+    @Test
+    fun `small tree schema restricts targets to visible labels and actionable ids`() {
+        val screen = PlannerScreen(
+            packageName = "example.form",
+            settled = true,
+            elements = listOf(
+                com.screensaathi.screen.PlannerElement(
+                    index = 0, resourceId = null, label = "Госномер", description = null,
+                    role = "TextView", editable = false, clickable = false, enabled = true,
+                    selected = false, checked = false, scrollable = false,
+                ),
+                com.screensaathi.screen.PlannerElement(
+                    index = 1, resourceId = null, label = null, description = null,
+                    role = "EditText", editable = true, clickable = true, enabled = true,
+                    selected = false, checked = false, scrollable = false,
+                ),
+                com.screensaathi.screen.PlannerElement(
+                    index = 2, resourceId = "non_actionable_container", label = null,
+                    description = null, role = "ViewGroup", editable = false, clickable = false,
+                    enabled = true, selected = false, checked = false, scrollable = false,
+                ),
+            ),
+        )
+        val transport = QueueTransport(validAnswer())
+        SarvamPlanner(transport).planNext(screen, "Указать госномер", 1, null)
+
+        val targetProperties = JSONObject(transport.requests.single())
+            .getJSONArray("tools").getJSONObject(0)
+            .getJSONObject("function").getJSONObject("parameters")
+            .getJSONObject("properties").getJSONObject("target")
+            .getJSONObject("properties")
+        val ids = targetProperties.getJSONObject("resource_id").getJSONArray("enum")
+        val labels = targetProperties.getJSONObject("text").getJSONArray("enum")
+        assertEquals(listOf(""), (0 until ids.length()).map(ids::getString))
+        assertEquals(listOf("", "Госномер"), (0 until labels.length()).map(labels::getString))
+    }
+
+    @Test
+    fun `Russian instruction may mention a Latin acronym visible in the safe tree`() {
+        val response = response(
+            """{"is_done":false,"action_type":"guide",
+                "target":{"text":"Госномер"},
+                "instruction":"Нажмите поле под подписью «Госномер» рядом с VIN.",
+                "language":"ru-RU","confidence":0.9,"reason":"visible field"}""",
+        )
+        val transport = QueueTransport(response)
+        val screen = PlannerScreen(
+            packageName = "example.form", settled = true,
+            elements = listOf(com.screensaathi.screen.PlannerElement(
+                index = 0, resourceId = null, label = "VIN и госномер", description = null,
+                role = "TextView", editable = false, clickable = false, enabled = true,
+                selected = false, checked = false, scrollable = false,
+            )),
+        )
+
+        val outcome = SarvamPlanner(transport).planNext(screen, "Указать госномер", 1, null)
+
+        assertTrue(outcome is PlannerOutcome.Success)
+    }
+
     private fun safeScreen() = PlannerScreen(
         packageName = "ru.example.app",
         settled = true,

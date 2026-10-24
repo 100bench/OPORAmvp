@@ -159,6 +159,106 @@ class UniversalGuidanceLoopTest {
     }
 
     @Test
+    fun `invented id gets one repair and an exact field label guides the nearby input`() {
+        val label = element(0, "", "Госномер", 45).copy(
+            clickable = false,
+            bounds = testRect(45, 265, 413, 365),
+        )
+        val field = element(1, "", "", 45, editable = true).copy(
+            bounds = testRect(45, 433, 742, 613),
+        )
+        val region = field.copy(index = 2, bounds = testRect(748, 433, 1035, 613))
+        val raw = ScreenSnapshot("example.plate", true, listOf(label, field, region))
+        val planner = QueuePlanner(
+            guide("Нажмите поле госномера.", resourceId = "invented_plate_input"),
+            guide("Нажмите поле под подписью «Госномер».", targetText = "Госномер"),
+        )
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+        loop.startGoal("Указать госномер")
+
+        assertEquals(2, planner.calls)
+        assertEquals(listOf(false, true), planner.repairFlags)
+        assertEquals(ScenarioPhase.CONFIRMING_GOAL, loop.session.phase)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.RequestManualScroll })
+
+        loop.confirmGoal()
+        val resolved = emissions.last { it.effect is ScenarioEffect.ShowGuidance }.resolvedTarget
+        assertEquals(field.bounds.left, resolved?.left)
+        assertEquals(field.bounds.top, resolved?.top)
+        assertEquals(field.bounds.right, resolved?.right)
+        assertEquals(field.bounds.bottom, resolved?.bottom)
+    }
+
+    @Test
+    fun `two invented ids end in bounded manual recovery`() {
+        val raw = screen("one", "visible", "Видимая кнопка", 10)
+        val planner = QueuePlanner(
+            guide("Нажмите кнопку.", resourceId = "invented_one"),
+            guide("Нажмите кнопку.", resourceId = "invented_two"),
+        )
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+        loop.startGoal("Продолжить")
+
+        assertEquals(2, planner.calls)
+        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertTrue(emissions.any { it.effect is ScenarioEffect.RequestManualScroll })
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
+    }
+
+    @Test
+    fun `short mention cannot become a planner text target on VIN form`() {
+        val raw = ScreenSnapshot("example.vin", true, listOf(
+            element(0, "", "Госномер не указан", 45).copy(clickable = false),
+            element(1, "", "", 45, editable = true),
+        ))
+        val planner = RepeatingPlanner(guide("Введите госномер.", targetText = "Госномер"))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+        loop.startGoal("Указать госномер")
+
+        assertEquals(2, planner.calls)
+        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
+    }
+
+    @Test
+    fun `filled edit value cannot ground a planner text target`() {
+        val raw = ScreenSnapshot("example.plate", true, listOf(
+            element(0, "", "А777АА777", 45, editable = true),
+        ))
+        val planner = RepeatingPlanner(guide("Нажмите поле.", targetText = "А777АА777"))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+        loop.startGoal("Продолжить")
+
+        assertEquals(2, planner.calls)
+        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
+    }
+
+    @Test
+    fun `nonactionable container id cannot ground a planner target`() {
+        val raw = ScreenSnapshot("example.form", true, listOf(
+            element(0, "form_container", "", 45).copy(clickable = false),
+        ))
+        val planner = RepeatingPlanner(guide("Нажмите форму.", resourceId = "form_container"))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+        loop.startGoal("Продолжить")
+
+        assertEquals(2, planner.calls)
+        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
+    }
+
+    @Test
     fun `same signature becoming unsettled or sensitive in flight rejects the stale response`() {
         val safe = stableScreen()
         val mutations = listOf(
@@ -338,7 +438,7 @@ class UniversalGuidanceLoopTest {
         val failure = emissions.map { it.effect }
             .filterIsInstance<ScenarioEffect.ShowRecoverableFailure>().last()
         assertEquals(ScenarioFailureReason.SCROLL_LIMIT, failure.reason)
-        assertEquals(4, planner.calls)
+        assertEquals(8, planner.calls)
     }
 
     @Test
@@ -679,6 +779,13 @@ class UniversalGuidanceLoopTest {
     }
 
     companion object {
+        private fun testRect(left: Int, top: Int, right: Int, bottom: Int) = Rect().apply {
+            this.left = left
+            this.top = top
+            this.right = right
+            this.bottom = bottom
+        }
+
         private fun clock(): () -> Long {
             var now = 0L
             return { ++now }

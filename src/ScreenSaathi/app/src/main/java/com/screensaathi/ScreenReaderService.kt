@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.screensaathi.screen.ScreenElement
 import com.screensaathi.screen.ScreenSnapshot
 import com.screensaathi.session.SessionController
@@ -35,6 +36,9 @@ class ScreenReaderService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
             -> {
+                // Overlay changes do not mean the foreground app is unsettled.
+                // Our DemoTaskActivity shares the package and must still count.
+                if (isOwnOverlayEvent(event)) return
                 lastEventUptime = SystemClock.uptimeMillis()
                 SessionController.instance?.onScreenContentChanged()
             }
@@ -45,8 +49,10 @@ class ScreenReaderService : AccessibilityService() {
             // much as a bare text row) — so this, not the click, is what tells
             // a stale highlight to drop.
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                lastEventUptime = SystemClock.uptimeMillis()
-                SessionController.instance?.onWindowStateChanged()
+                if (!isOwnOverlayEvent(event)) {
+                    lastEventUptime = SystemClock.uptimeMillis()
+                    SessionController.instance?.onWindowStateChanged()
+                }
                 OverlayService.onSystemWindowsChanged()
             }
 
@@ -74,14 +80,34 @@ class ScreenReaderService : AccessibilityService() {
             // inside a third-party app is the only thing this signal should
             // ever mean.
             AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                lastEventUptime = SystemClock.uptimeMillis()
-                if (event.packageName != packageName) {
+                if (!isOwnOverlayEvent(event)) {
+                    lastEventUptime = SystemClock.uptimeMillis()
                     val clickedBounds = event.source?.let { source ->
                         Rect().also(source::getBoundsInScreen).takeUnless(Rect::isEmpty)
                     }
                     SessionController.instance?.onUserClicked(clickedBounds)
                 }
             }
+        }
+    }
+
+    private fun isOwnOverlayEvent(event: AccessibilityEvent): Boolean {
+        if (event.packageName?.toString() != packageName) return false
+        return try {
+            val window = windows.firstOrNull { it.id == event.windowId }
+            if (window != null && window.type != AccessibilityWindowInfo.TYPE_APPLICATION &&
+                window.root?.packageName?.toString() == packageName
+            ) return true
+
+            var node = event.source ?: window?.root
+            repeat(30) {
+                if (node?.viewIdResourceName?.substringAfterLast('/') == "pill_root") return true
+                node = node?.parent ?: return false
+            }
+            false
+        } catch (_: Exception) {
+            // If the window disappeared during a transition, keep its event.
+            false
         }
     }
 

@@ -397,7 +397,7 @@ class SessionController(
             val session = universalLoop.session
             val message = when (session.phase) {
                 ScenarioPhase.WAITING_FOR_MANUAL_SCROLL ->
-                    "Прокрутите экран вручную — я продолжу после его изменения."
+                    "Не могу надёжно выделить цель. Проверьте подписи и действуйте вручную; я продолжу после изменения экрана."
                 ScenarioPhase.GUIDING_STEP ->
                     session.lastSafeInstruction
                         ?: "Нажмите выделенный элемент на экране или остановите сценарий."
@@ -591,7 +591,7 @@ class SessionController(
                     OverlayCommand(
                         PillState.GUIDING,
                         expanded = true,
-                        instruction = "Цель пока не видна. Прокрутите экран вручную — я проверю следующий видимый участок.",
+                        instruction = "Не могу надёжно выделить цель. Проверьте подписи и при необходимости прокрутите экран или заполните поле сами. Я продолжу после изменения экрана.",
                         language = lastLanguage,
                         highlight = null,
                     ),

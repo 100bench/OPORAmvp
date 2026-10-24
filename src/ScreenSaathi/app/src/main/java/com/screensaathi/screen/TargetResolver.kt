@@ -67,12 +67,12 @@ object TargetResolver {
             )
 
         if (scored.isEmpty()) {
-            Log.d(TAG, "TARGET_RESOLUTION query='$query' pkg=${snapshot.packageName} result=NOT_FOUND " +
+            Log.d(TAG, "TARGET_RESOLUTION pkg=${snapshot.packageName} result=NOT_FOUND " +
                 "elements=${snapshot.elements.size}")
             return Result.NotFound(query)
         }
 
-        val best = scored.first()
+        var best = scored.first()
         val rivals = scored.drop(1).filter { best.score - it.score < AMBIGUITY_MARGIN }
 
         // Two different elements scoring the same is only ambiguous if they are
@@ -80,14 +80,60 @@ object TargetResolver {
         // the same target, and the sort above already picked the better one.
         val genuineRivals = rivals.filter { !overlaps(it.bounds, best.bounds) }
         if (genuineRivals.isNotEmpty()) {
-            Log.d(TAG, "TARGET_RESOLUTION query='$query' pkg=${snapshot.packageName} result=AMBIGUOUS " +
-                "candidates=${(listOf(best) + genuineRivals).joinToString { "'${it.element.text}'@${it.score}" }}")
+            Log.d(TAG, "TARGET_RESOLUTION pkg=${snapshot.packageName} result=AMBIGUOUS " +
+                "candidates=${genuineRivals.size + 1}")
             return Result.Ambiguous(listOf(best) + genuineRivals)
         }
 
-        Log.d(TAG, "TARGET_RESOLUTION query='$query' pkg=${snapshot.packageName} result=FOUND " +
-            "text='${best.element.text}' id='${best.element.resourceId}' class=${best.element.className} " +
-            "clickable=${best.element.clickable} why=${best.why} score=${best.score} " +
+        // A loose match in explanatory copy is not a target. An exact, short
+        // static label can be mapped to an input only when the geometry is
+        // unambiguous. Keep unrelated bare text rows targetable.
+        val fields = snapshot.elements.filter { it.visibleToUser && it.enabled && it.editable && !it.password }
+        if (!best.element.isActionable) {
+            val containing = fields.filter { contains(it.bounds, best.bounds) }
+            val below = fields.filter { field ->
+                field.bounds.top >= best.bounds.bottom &&
+                    field.bounds.top - best.bounds.bottom <=
+                    maxOf(120, (best.bounds.bottom - best.bounds.top) * 2) &&
+                    horizontalOverlap(field.bounds, best.bounds) >=
+                    minOf(
+                        field.bounds.right - field.bounds.left,
+                        best.bounds.right - best.bounds.left,
+                    ) * 0.3
+            }
+            if (containing.isNotEmpty() || below.isNotEmpty()) {
+                val shortExactLabel = best.score >= SCORE_NORMALIZED &&
+                    best.element.text.length <= MAX_FIELD_LABEL_LENGTH &&
+                    best.element.text.trim().split(Regex("\\s+")).size <= MAX_FIELD_LABEL_WORDS
+                if (!shortExactLabel) return Result.NotFound(query)
+                if (containing.size > 1) return Result.NotFound(query)
+                if (containing.size + below.size != 1) return Result.NotFound(query)
+                val field = (containing + below).single()
+                val interveningLabel = snapshot.elements.any { other ->
+                    other !== best.element && other.visibleToUser && !other.isActionable &&
+                        other.text.isNotBlank() &&
+                        other.bounds.top >= best.bounds.bottom &&
+                        other.bounds.bottom <= field.bounds.top &&
+                        horizontalOverlap(other.bounds, field.bounds) > 0
+                }
+                if (interveningLabel) return Result.NotFound(query)
+                best = Candidate(field, best.score, "label_for_editable")
+            } else if (best.score >= SCORE_NORMALIZED && fields.any { field ->
+                    field.bounds.top >= best.bounds.bottom &&
+                        field.bounds.top - best.bounds.bottom <= MAX_FORM_LABEL_DISTANCE &&
+                        horizontalOverlap(field.bounds, best.bounds) > 0
+                }) {
+                // Looks like a form label, but its control is too far away
+                // for a reliable association.
+                return Result.NotFound(query)
+            } else if (best.score < SCORE_NORMALIZED && best.element.text.length > MAX_FIELD_LABEL_LENGTH) {
+                return Result.NotFound(query)
+            }
+        }
+
+        Log.d(TAG, "TARGET_RESOLUTION pkg=${snapshot.packageName} result=FOUND " +
+            "class=${best.element.className} clickable=${best.element.clickable} " +
+            "editable=${best.element.editable} why=${best.why} score=${best.score} " +
             "boundsInScreen=${best.bounds.toShortString()}")
         return Result.Found(best)
     }
@@ -131,7 +177,18 @@ object TargetResolver {
     private val ScreenElement.isActionable: Boolean
         get() = clickable || editable
 
-    private fun overlaps(a: Rect, b: Rect): Boolean = Rect.intersects(a, b)
+    private fun overlaps(a: Rect, b: Rect): Boolean =
+        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+
+    private fun contains(outer: Rect, inner: Rect): Boolean =
+        outer.left <= inner.left && outer.top <= inner.top &&
+            outer.right >= inner.right && outer.bottom >= inner.bottom
+
+    private fun horizontalOverlap(a: Rect, b: Rect): Int =
+        (minOf(a.right, b.right) - maxOf(a.left, b.left)).coerceAtLeast(0)
 
     private const val TAG = "TargetResolver"
+    private const val MAX_FIELD_LABEL_LENGTH = 40
+    private const val MAX_FIELD_LABEL_WORDS = 2
+    private const val MAX_FORM_LABEL_DISTANCE = 600
 }

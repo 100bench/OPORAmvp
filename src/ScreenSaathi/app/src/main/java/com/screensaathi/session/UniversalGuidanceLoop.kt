@@ -334,11 +334,17 @@ class UniversalGuidanceLoop(
                 ScenarioEvent.PlannerFailed(outcome.kind.toScenarioFailure()),
                 token,
             )
-            is PlannerOutcome.Success -> acceptPlan(outcome.plan, raw, token)
+            is PlannerOutcome.Success -> acceptPlan(outcome.plan, raw, token, repairFormat, staleReplans)
         }
     }
 
-    private fun acceptPlan(plan: PlannerResult, raw: ScreenSnapshot, token: Long) {
+    private fun acceptPlan(
+        plan: PlannerResult,
+        raw: ScreenSnapshot,
+        token: Long,
+        repairFormat: Boolean,
+        staleReplans: Int,
+    ) {
         if (!SafetyGuard.isReadOnlyGuidanceAction(plan.actionType)) {
             dispatch(ScenarioEvent.PlannerFailed(ScenarioPlanningFailure.INVALID_RESPONSE), token)
             return
@@ -350,7 +356,14 @@ class UniversalGuidanceLoop(
 
         val target = resolve(plan, raw)
         if (target == null) {
-            dispatch(ScenarioEvent.TargetNotFound, token)
+            if (repairFormat) {
+                dispatch(ScenarioEvent.TargetNotFound, token)
+            } else {
+                // The model may invent a plausible ID for a real, unlabelled
+                // control. Give it one chance to select an exact visible label
+                // before telling the person to scroll a screen that is present.
+                analyzeCurrentScreen(token, repairFormat = true, staleReplans = staleReplans)
+            }
             return
         }
         val semanticTarget = runCatching {
@@ -386,9 +399,34 @@ class UniversalGuidanceLoop(
         val resolvable = raw.copy(
             elements = raw.elements.filter { it.visibleToUser && !it.password },
         )
-        val bounds = resolvable.boundsForResourceId(plan.targetResourceId)
+        val safeElements = ScreenSanitizer.sanitize(resolvable).elements
+        val actionableIds = safeElements.asSequence()
+            .filter { it.enabled && (it.editable || it.clickable) }
+            .mapNotNull { it.resourceId }
+            .toSet()
+        val bounds = plan.targetResourceId.takeIf { it in actionableIds }
+            ?.let(resolvable::boundsForResourceId)
             ?: plan.targetText.takeIf(String::isNotBlank)?.let { text ->
-                (TargetResolver.resolve(text, resolvable) as? TargetResolver.Result.Found)
+                // Planner text is a label copied from the supplied tree, not
+                // a natural-language search query. A prefix like "Госномер"
+                // must not point at "Госномер не указан" on a VIN form.
+                val exactVisibleLabel = safeElements.any { element ->
+                    listOfNotNull(element.label, element.description)
+                        .any { it.trim().equals(text.trim(), ignoreCase = true) }
+                }
+                if (!exactVisibleLabel) return@let null
+                // Never let a filled EditText value participate in matching.
+                // Only labels already present in the provider-safe DTO may
+                // stand in for text while the raw geometry stays local.
+                val labelsByIndex = safeElements.associateBy { it.index }
+                val grounded = resolvable.copy(elements = resolvable.elements.map { element ->
+                    val safe = labelsByIndex[element.index]
+                    val label = listOfNotNull(safe?.label, safe?.description)
+                        .firstOrNull { it.trim().equals(text.trim(), ignoreCase = true) }
+                        ?: safe?.label.orEmpty()
+                    element.copy(text = label, hintText = "", contentDescription = "")
+                })
+                (TargetResolver.resolve(text, grounded) as? TargetResolver.Result.Found)
                     ?.candidate
                     ?.bounds
             }
