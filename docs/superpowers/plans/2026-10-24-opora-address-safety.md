@@ -9,7 +9,7 @@
 ## 1. Identify the trigger on Samsung
 
 - Open Yandex Go → Taxi → address entry, with no address typed.
-- Evaluate the same live `ScreenSnapshot` that `UniversalGuidanceLoop` uses. Record only the rule category, matched field kind (`text`, `hint`, `contentDescription`, `resourceId`, `password`, or `inputType`), element visibility, editability, and a one-way digest of the resource ID. Do not log field values or the raw tree.
+- Evaluate the same live `ScreenSnapshot` that `UniversalGuidanceLoop` uses. Record only the rule category, matched field kind (`text`, `hint`, `contentDescription`, `resourceId`, `password`, or `inputType`), element visibility, editability, and the technical resource ID when needed to distinguish map controls. Do not log field values or the raw tree.
 - Confirm whether the pause comes from a hidden node, map `pin` wording, or another visible control. If the exact state cannot be reproduced, retain this as an unverified hypothesis and do not claim the 15:32 incident explained.
 
 ## 2. Reproduce in focused tests
@@ -26,7 +26,7 @@
 **File:** `app/src/main/java/com/screensaathi/session/ScreenSafetyGate.kt`
 
 - Limit label and input-type checks to `visibleToUser` elements, matching the screen sanitizer's visibility boundary.
-- If the live match is an ambiguous `pin` resource ID, require an editable/auth input role for an ID-only PIN signal; keep explicit visible auth language and password input flags effective.
+- If the live match is an ambiguous `pin` resource ID, distinguish route markers from PIN entry using the element role and visible address-field context; keep explicit visible auth language and password input flags effective.
 - Preserve the separate bank, financial, and final-action branches.
 - Update the local explanation only if the screen is genuinely a data-entry pause; do not tell the user an address is a secret.
 
@@ -39,6 +39,7 @@
 
 ## Current verification state (24 October 2026)
 
-- Regression tests now cover a visible address with hidden auth controls, a visible `Map pin`, an ID-only final payment button, and visible English/Russian PIN prompts. All pass; the full unit suite and APK build pass.
-- The new APK is installed on Samsung. Yandex Go launched, but the phone locked before its address UI tree could be inspected. The exact trigger of the reported 15:32 pause is still unconfirmed; device acceptance remains open until the phone is unlocked and the address field is shown.
+- Regression tests now cover a visible address with hidden auth controls, `Map pin`, `source_pin` and `pin_slot`, an ID-only final payment button, and visible English/Russian PIN prompts. A `pin_slot` without both an enabled editable address field and a visible route marker remains blocked. All tests and the APK build pass.
+- On Samsung, the live address screen had two `address_input` fields. Temporary diagnostics identified two non-editable map controls, `source_pin` and `pin_slot`, as consecutive false auth triggers. No address value or raw tree was saved.
+- The final APK without diagnostics is installed. After the narrower safety review fix, a text request from the overlay on that same screen reached the existing Mac OpenAI proxy (HTTP 200) and moved to `GUIDING`, with no auth pause. ADB entered an English equivalent because its `input text` command did not accept Cyrillic; the user checks spoken wording separately.
 

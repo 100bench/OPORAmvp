@@ -40,14 +40,22 @@ object ScreenSafetyGate {
         }
 
         val visibleElements = snapshot.elements.filter(ScreenElement::visibleToUser)
+        val addressEntryVisible = visibleElements.any {
+            it.editable && it.enabled && ADDRESS_ENTRY_ID.containsMatchIn(it.resourceId)
+        }
+        val locationMarkerVisible = visibleElements.any {
+            !it.editable && LOCATION_PIN.containsMatchIn(it.resourceId)
+        }
         if (visibleElements.any { it.password || isPasswordInputType(it.inputType) }) {
             return pauseAuth()
         }
 
         for (element in visibleElements) {
-            for (value in rawSafetyValues(element)) {
+            for ((source, value) in rawSafetyValues(element)) {
                 val normalized = value.lowercase(Locale.ROOT)
-                if (isAuthenticationSignal(normalized, element)) return pauseAuth()
+                if (isAuthenticationSignal(normalized, element, source, addressEntryVisible, locationMarkerVisible)) {
+                    return pauseAuth()
+                }
                 if (FINANCIAL.containsMatchIn(normalized)) {
                     return safeHandoff(
                         ScreenRiskCategory.FINANCIAL,
@@ -70,19 +78,32 @@ object ScreenSafetyGate {
         )
     }
 
-    private fun rawSafetyValues(element: ScreenElement): Sequence<String> = sequenceOf(
-        element.text,
-        element.contentDescription,
-        element.hintText,
-        element.resourceId,
-    ).filter(String::isNotBlank)
+    private fun rawSafetyValues(element: ScreenElement): Sequence<Pair<String, String>> = sequenceOf(
+        "text" to element.text,
+        "description" to element.contentDescription,
+        "hint" to element.hintText,
+        "resource_id" to element.resourceId,
+    ).filter { it.second.isNotBlank() }
 
-    private fun isAuthenticationSignal(value: String, element: ScreenElement): Boolean {
+    private fun isAuthenticationSignal(
+        value: String,
+        element: ScreenElement,
+        source: String,
+        addressEntryVisible: Boolean,
+        locationMarkerVisible: Boolean,
+    ): Boolean {
         if (AUTHENTICATION.containsMatchIn(value)) return true
         if (!PIN_TOKEN.containsMatchIn(value)) return false
         // "Map pin" is a location marker, not a secret code. Keep a plain PIN
         // label blocked, including on a non-editable heading or keypad.
-        return element.editable || !LOCATION_PIN.containsMatchIn(value)
+        if (element.editable) return true
+        if (LOCATION_PIN.containsMatchIn(value)) return false
+        // Some map widgets expose an unlabelled marker as `pin_slot`. Treat it
+        // as location chrome only while a real address-entry field is visible.
+        if (source == "resource_id" && value == "pin_slot" && addressEntryVisible && locationMarkerVisible) {
+            return false
+        }
+        return true
     }
 
     private fun pauseAuth() = ScreenSafetyAssessment(
@@ -119,7 +140,11 @@ object ScreenSafetyGate {
         RegexOption.IGNORE_CASE,
     )
     private val LOCATION_PIN = Regex(
-        "(?:^|[^\\p{L}\\p{N}])(?:map|location|marker|карта|карты|адрес|точка)[_\\s-]+pin(?:$|[^\\p{L}\\p{N}])",
+        "(?:^|[^\\p{L}\\p{N}])(?:map|location|marker|source|origin|destination|pickup|dropoff|waypoint|route|карта|карты|адрес|точка)[_\\s-]+pin(?:$|[^\\p{L}\\p{N}])",
+        RegexOption.IGNORE_CASE,
+    )
+    private val ADDRESS_ENTRY_ID = Regex(
+        "(?:^|[_-])(?:address|destination|pickup|dropoff)(?:[_-]|$)",
         RegexOption.IGNORE_CASE,
     )
     private val FINANCIAL = Regex(

@@ -77,6 +77,68 @@ class ScreenSafetyGateTest {
     }
 
     @Test
+    fun `visible route source pin beside address fields does not pause for authentication`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(
+                element(text = "", resourceId = "address_input"),
+                element(
+                    text = "",
+                    resourceId = "source_pin",
+                    className = "ViewGroup",
+                    editable = false,
+                ),
+                element(
+                    text = "",
+                    resourceId = "pin_slot",
+                    className = "View",
+                    editable = false,
+                ),
+            )
+        )
+
+        assertEquals(ScreenDisposition.ALLOW, assessment.disposition)
+    }
+
+    @Test
+    fun `PIN slot without address context remains protected`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(element(
+                text = "",
+                resourceId = "pin_slot",
+                className = "View",
+                editable = false,
+            ))
+        )
+
+        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+    }
+
+    @Test
+    fun `source input beside PIN slot is not enough to bypass auth pause`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(
+                element(text = "", resourceId = "source_input"),
+                element(text = "", resourceId = "pin_slot", className = "View", editable = false),
+            )
+        )
+
+        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+    }
+
+    @Test
+    fun `disabled noneditable address field does not exempt PIN slot`() {
+        val assessment = ScreenSafetyGate.assess(
+            snapshot(
+                element(text = "", resourceId = "address_input", editable = false, enabled = false),
+                element(text = "", resourceId = "source_pin", className = "ViewGroup", editable = false),
+                element(text = "", resourceId = "pin_slot", className = "View", editable = false),
+            )
+        )
+
+        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+    }
+
+    @Test
     fun `unlabelled final action button remains a local handoff`() {
         val assessment = ScreenSafetyGate.assess(
             snapshot(element(
@@ -181,6 +243,7 @@ class ScreenSafetyGateTest {
         resourceId: String = "field",
         className: String = "EditText",
         editable: Boolean = true,
+        enabled: Boolean = true,
         password: Boolean = false,
         inputType: Int = 0,
         visibleToUser: Boolean = true,
@@ -192,6 +255,7 @@ class ScreenSafetyGateTest {
         bounds = Rect(0, 0, 100, 100),
         editable = editable,
         clickable = true,
+        enabled = enabled,
         password = password,
         inputType = inputType,
         visibleToUser = visibleToUser,
