@@ -472,8 +472,6 @@ class SarvamPlanner private constructor(
                 if (listOf(resourceId, targetText).any(FinalActionPolicy::isFinalAction)) {
                     return invalidGuidance()
                 }
-            } else if (!isDone) {
-                return invalidGuidance()
             }
 
             return PlannerOutcome.Success(
@@ -487,7 +485,7 @@ class SarvamPlanner private constructor(
                     confidence = confidence,
                     reason = reason.take(80),
                     language = Language.APP_DEFAULT,
-                    isDone = actionType == "answer" || isDone,
+                    isDone = actionType == "answer",
                     targetText = if (actionType == "guide") targetText else "",
                     actionType = actionType,
                     actionPayload = "",

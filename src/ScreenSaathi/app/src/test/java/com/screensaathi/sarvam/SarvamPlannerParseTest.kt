@@ -332,7 +332,7 @@ class SarvamPlannerParseTest {
                 "instruction":"Откройте профиль","language":"ru-RU","confidence":1.1,"reason":"visible"}""",
             """{"is_done":true,"action_type":"guide","target":{"text":"Профиль"},
                 "instruction":"Откройте профиль","language":"ru-RU","confidence":0.9,"reason":"visible"}""",
-            """{"is_done":false,"action_type":"answer",
+            """{"is_done":"false","action_type":"answer",
                 "instruction":"Профиль находится в меню","language":"ru-RU","confidence":0.9,"reason":"answer"}""",
         )
 
@@ -369,6 +369,25 @@ class SarvamPlannerParseTest {
                     "language":"ru-RU","confidence":0.93,"reason":"visible navigation"}"""
             ),
             "Где история заказов?",
+        )
+
+        assertTrue(outcome is PlannerOutcome.Success)
+        val plan = (outcome as PlannerOutcome.Success).plan
+        assertEquals("answer", plan.actionType)
+        assertTrue(plan.isDone)
+        assertEquals("", plan.targetResourceId)
+        assertEquals("", plan.targetText)
+    }
+
+    @Test
+    fun `typed answer with false done flag still completes one shot question`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(
+            guidanceResponse(
+                """{"is_done":false,"action_type":"answer",
+                    "instruction":"На экране открыты настройки.",
+                    "language":"ru-RU","confidence":0.91,"reason":"screen description"}"""
+            ),
+            "Что находится на экране?",
         )
 
         assertTrue(outcome is PlannerOutcome.Success)
