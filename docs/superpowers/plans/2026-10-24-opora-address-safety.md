@@ -37,3 +37,8 @@
 - Keep exact matched values and any personal address out of logs, test fixtures, and commits.
 - Commit the correction separately from other scenario work.
 
+## Current verification state (24 October 2026)
+
+- Regression tests now cover a visible address with hidden auth controls, a visible `Map pin`, an ID-only final payment button, and visible English/Russian PIN prompts. All pass; the full unit suite and APK build pass.
+- The new APK is installed on Samsung. Yandex Go launched, but the phone locked before its address UI tree could be inspected. The exact trigger of the reported 15:32 pause is still unconfirmed; device acceptance remains open until the phone is unlocked and the address field is shown.
+
