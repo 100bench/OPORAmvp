@@ -8,7 +8,11 @@ import android.os.Handler
 import android.os.Looper
 import com.screensaathi.OverlayService
 
-/** adb-only debug entry: same text submit path as the card; never logs or stores the query. */
+/**
+ * adb-only debug entry: adds no query logging/storage; uses the normal card submit path.
+ * Guidance may persist the query as the goal in an encrypted ResumeCapsule. Normal cleanup
+ * applies: stop/completion/safe handoff deletes it; expired capsules are deleted on load.
+ */
 class TextProbeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         resultCode = Activity.RESULT_CANCELED

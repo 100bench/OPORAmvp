@@ -63,9 +63,14 @@ performed by the user with no speech recording retained.
 The debug APK exposes `com.screensaathi/.debug.TextProbeReceiver`, protected by
 Android's `DUMP` permission. An adb broadcast with action
 `com.screensaathi.SUBMIT_TEXT_PROBE` and a nonpersonal `query` invokes the same
-main-thread card submission path as typing. It does not log or persist the query
-and is absent from the release manifest. Use only for explicitly authorized,
-privacy-checked physical probes; it does not tap or enter third-party fields.
+main-thread card submission path as typing. The receiver adds no query logging or
+storage and is absent from the release manifest. Normal app resume persistence
+still applies: guidance may save the query as `session.goal` in an encrypted
+`ResumeCapsule`. Stop the scenario after a probe; normal stop, completion and safe
+handoff delete the capsule. The 30-minute resume age limit is checked on load,
+which deletes expired capsules; it is not a timed background deletion guarantee.
+Use only nonpersonal queries for explicitly authorized, privacy-checked physical
+probes; the receiver does not tap or enter third-party fields.
 
 Planner JVM latency is **not** text-to-render Samsung latency. Acceptance needs
 20 warm device text samples from complete routes (p50 ≤3s, p95 ≤5s), cold samples
