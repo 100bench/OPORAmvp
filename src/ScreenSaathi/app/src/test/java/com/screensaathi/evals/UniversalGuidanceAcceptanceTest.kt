@@ -75,6 +75,8 @@ class UniversalGuidanceAcceptanceTest {
     @Test
     fun `every acceptance tree uses one safe app agnostic guidance path`() {
         fixtures().forEach { fixture ->
+            assertEquals("synthetic", fixture.captureKind)
+            println("capture_kind=synthetic case=" + fixture.id)
             assertTrue(
                 "${fixture.id}: fixture planner output must remain read-only",
                 fixture.plan.actionType in setOf("guide", "answer"),
@@ -199,6 +201,7 @@ class UniversalGuidanceAcceptanceTest {
 
     private data class AcceptanceFixture(
         val id: String,
+        val captureKind: String,
         val goal: String,
         val snapshot: ScreenSnapshot,
         val appLabel: String?,
@@ -255,6 +258,7 @@ class UniversalGuidanceAcceptanceTest {
         val plan = root.getJSONObject("planner_result")
         return AcceptanceFixture(
             id = root.getString("id"),
+            captureKind = root.getString("capture_kind"),
             goal = root.getString("goal"),
             snapshot = snapshot,
             appLabel = root.optString("app_label").takeIf(String::isNotBlank),

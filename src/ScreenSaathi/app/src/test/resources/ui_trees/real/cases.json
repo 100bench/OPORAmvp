@@ -1,0 +1,161 @@
+[
+  {
+    "file": "yandex_go/taxi_launch_entry.json",
+    "capture_kind": "sanitized_real",
+    "disposition": "ALLOW",
+    "resolver": "NotFound",
+    "target_resource_id": "",
+    "target_text": "Куда поедете?",
+    "target_index": -1,
+    "phase": "FAILED",
+    "recovery": "target_not_found",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "yandex_go/destination_empty_keyboard.json",
+    "capture_kind": "sanitized_real",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "",
+    "target_text": "Куда поедете?",
+    "expected_target_resource_id": "fixture_resource_10",
+    "target_index": 45,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "yandex_go/destination_empty_keyboard.json",
+    "capture_kind": "sanitized_real",
+    "disposition": "ALLOW",
+    "resolver": "Ambiguous",
+    "target_resource_id": "fixture_resource_10",
+    "target_index": 45,
+    "phase": "FAILED",
+    "recovery": "target_ambiguous",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "yandex_go/destination_empty_keyboard.json",
+    "capture_kind": "sanitized_real",
+    "disposition": "ALLOW",
+    "resolver": "Ambiguous",
+    "target_resource_id": "fixture_resource_10",
+    "target_text": "Куда поедете?",
+    "target_index": 45,
+    "planner_index": 40,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "yandex_go/final_handoff_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "SAFE_HANDOFF",
+    "resolver": "Found",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "SAFE_HANDOFF",
+    "recovery": "handoff",
+    "max_planner_calls": 0
+  },
+  {
+    "file": "auto_ru/sell_entry_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "auto_ru/plate_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "auto_ru/vin_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "auto_ru/later_form_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "auto_ru/final_publish_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "SAFE_HANDOFF",
+    "resolver": "Found",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "SAFE_HANDOFF",
+    "recovery": "handoff",
+    "max_planner_calls": 0
+  },
+  {
+    "file": "common/popup_close_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "WAITING_FOR_MODAL_DISMISS",
+    "recovery": "guidance",
+    "max_planner_calls": 0
+  },
+  {
+    "file": "common/popup_manual_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "ALLOW",
+    "resolver": "NotActionable",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "WAITING_FOR_MODAL_DISMISS",
+    "recovery": "manual_modal",
+    "max_planner_calls": 0
+  },
+  {
+    "file": "common/auth_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "PAUSE_AUTH",
+    "resolver": "NotActionable",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "PAUSED_FOR_AUTH",
+    "recovery": "auth",
+    "max_planner_calls": 0
+  },
+  {
+    "file": "common/off_viewport_duplicate_synthetic.json",
+    "capture_kind": "synthetic",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "fixture_resource_0",
+    "target_index": 0,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  }
+]

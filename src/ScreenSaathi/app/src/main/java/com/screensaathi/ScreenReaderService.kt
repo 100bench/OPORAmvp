@@ -284,6 +284,8 @@ class ScreenReaderService : AccessibilityService() {
                         visibleToUser = node.isVisibleToUser,
                         inDialog = insideDialog,
                         clickableAncestorIndex = clickableAncestorIndex,
+                        editableValueEmpty = node.isEditable && (rawText.isBlank() ||
+                            (node.isShowingHintText && rawText == rawHint)),
                     )
                 )
                 if (node.isClickable) childClickableAncestorIndex = index

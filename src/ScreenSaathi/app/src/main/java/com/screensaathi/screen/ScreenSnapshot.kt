@@ -28,6 +28,8 @@ data class ScreenElement(
     val inDialog: Boolean = false,
     /** Nearest emitted clickable ancestor, retained only on the device. */
     val clickableAncestorIndex: Int? = null,
+    /** Local capture evidence only; false when the original editable value is unknown. */
+    val editableValueEmpty: Boolean = false,
 )
 
 data class ScreenSnapshot(

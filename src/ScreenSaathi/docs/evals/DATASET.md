@@ -15,8 +15,9 @@ as the regression set today. Split when the corpus passes ~50 cases.
 
 ## Provenance — read this before trusting a number
 
-Every case is **synthetic and hand-authored**. There is no captured production
-traffic and no real user data of any kind.
+Every planner JSONL case described above is **synthetic and hand-authored**.
+The separate UI-tree replay corpus below includes sanitized physical captures.
+Neither corpus contains raw traffic or real user values.
 
 - Screens are transcribed from the real `DemoTaskActivity` layout
   (`amount_field`, `account_field`, `submit_button`) and the real `pay_bill`
@@ -72,3 +73,55 @@ To unlock the evaluations that cannot run today:
 Patient information, phone numbers, OTPs, account numbers, credentials, API
 keys, or raw screenshots of a real person's device. The account numbers in the
 fixtures (`100234567`) are obviously fake and deliberately so.
+
+## Samsung UI-tree acceptance replay
+
+`app/src/test/resources/ui_trees/real/cases.json` is the table of expected local
+disposition, direct resolver result, selected index/opaque resource ID, recovery
+class, phase and maximum planner calls. `RealUiTreeRegressionTest` runs each row
+through the real safety gate, sanitizer, resolver and scenario loop, with an
+authored read-only planner fake. Test names include `sanitized_real` or `synthetic`.
+No provider, STT or TTS request is made. These tests measure deterministic routing,
+not live model quality or physical scenario acceptance.
+
+Version 2 fixtures have exact schema fields, including provenance metadata. Real
+captures use `source=accessibility_debug_export`, capture date, device model,
+Android/app versions and a nonpersonal start-state slug. Synthetic fixtures use
+`source=synthetic` and `not_applicable` technical metadata; their file names also
+end in `_synthetic`. The directory name `real/` alone never establishes provenance.
+Version 1 is rejected explicitly; recapture is required to establish provenance.
+
+Current real evidence: Samsung SM-N975F, Android 12, Yandex Go 5.98.4, captured
+2026-10-27 with the debug exporter. `destination_empty_keyboard.json` retains
+109 nodes and the approved static hint `Куда поедете?` on an empty editable.
+Both address fields share an opaque ID. Label-only and exact ID+label routes
+select index 45; the ID-only route remains ambiguous. The combined route supplies
+an intentionally incorrect planner index and still resolves by semantics. These
+are offline replay results, not a claim that the physical taxi flow passed.
+
+`taxi_launch_entry.json` is a second sanitized real capture (92 nodes, no editable
+fields), after explicitly authorized test-navigation Back keys and relaunch of
+the known app activity. Only `Такси`, `Куда`, `Куда поедете?` and `Поездки` were
+approved; no semantic labels survived.
+It proves structural capture and honest `NotFound`/local recovery, not successful
+taxi entry or an inaccessible target fix. The exact visible screen is unconfirmed;
+no further navigation was attempted.
+
+All external IDs/classes are opaque aliases, not production identifiers. Aliasing
+preserves within-fixture equality and distinctness but removes ID-based safety
+semantics: real replay alone cannot prove handling of `source_pin`/`pin_slot`.
+Existing explicitly synthetic safety regressions cover those tokens. Editable
+text/descriptions, password nodes and unapproved labels never survive export.
+The only exception is an explicitly approved static hint of a proven-empty
+editable; phone/email/OTP/long-number redaction still applies. Replay injects a
+synthetic current value and checks it never reaches the planner projection.
+
+Missing physical evidence remains explicit: taxi entry/final-order, Auto.ru sell
+entry/plate/VIN/later form/final publication, popup close/manual-dismiss, auth and
+the originally observed bottom navigation duplicate at viewport boundary 2153/2157.
+The current real destination tree does not reproduce that boundary mismatch.
+Synthetic fixtures cover the missing routes, including final publish handoff
+before any planner request, but do not satisfy those physical acceptance criteria.
+Do not enter personal addresses, plates, VINs or credentials to create fixtures;
+user navigation/test-only auth must be arranged separately. Task 8 remains the
+physical end-to-end acceptance gate.

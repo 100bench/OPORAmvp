@@ -630,7 +630,8 @@ class UniversalGuidanceLoop(
         val idResult = plan.targetResourceId.takeIf(String::isNotBlank)?.let {
             TargetResolver.resolveResourceId(it, raw)
         }
-        if (idResult != null && idResult !is TargetResolver.Result.NotFound) return idResult
+        if (idResult != null && idResult !is TargetResolver.Result.NotFound &&
+            idResult !is TargetResolver.Result.Ambiguous) return idResult
         val text = plan.targetText.takeIf(String::isNotBlank)
             ?: return idResult ?: TargetResolver.Result.NotFound("")
 
@@ -646,7 +647,12 @@ class UniversalGuidanceLoop(
                 listOfNotNull(safe.label, safe.description)
                     .any { it.trim().equals(text.trim(), ignoreCase = true) }
             }) return TargetResolver.Result.NotFound(text)
-        val grounded = raw.copy(elements = raw.elements.map { element ->
+        // Shared IDs need an exact safe label inside that same ID's candidates.
+        // A matching label elsewhere and the provider's bare index cannot break a tie.
+        val candidates = if (idResult is TargetResolver.Result.Ambiguous) {
+            raw.elements.filter { it.resourceId == plan.targetResourceId }
+        } else raw.elements
+        val grounded = raw.copy(elements = candidates.map { element ->
             val safe = labelsByIndex[element.index]
             val label = listOfNotNull(safe?.label, safe?.description)
                 .firstOrNull { it.trim().equals(text.trim(), ignoreCase = true) }

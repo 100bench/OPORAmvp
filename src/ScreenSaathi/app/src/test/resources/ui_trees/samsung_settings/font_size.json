@@ -1,4 +1,5 @@
 {
+  "capture_kind": "synthetic",
   "id": "samsung_settings_font_size",
   "goal": "Увеличить шрифт",
   "package_name": "com.android.settings",

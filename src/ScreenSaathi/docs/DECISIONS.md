@@ -29,6 +29,14 @@ window where a highlight needs to appear.
 
 ## Target resolution
 
+**An ambiguous resource ID can be narrowed only by an exact safe label in the
+same ID group.** The sanitized Samsung Yandex Go destination capture on
+2026-10-27 contains two editable fields sharing one opaque resource ID, but only
+one has the approved empty-field hint `Куда поедете?`. The offline replay rejects
+ID-only ambiguity and intersects ID+label without trusting the planner's index.
+An unrelated ID, partial label, hidden target or remaining tie cannot select a
+control. Physical end-to-end acceptance remains separate from this replay.
+
 **Ranked scoring, never `contains`.** A plain substring match let "call" match
 inside "Recall" — a real observed failure. `TargetResolver` scores
 exact-text > normalized > word-boundary > id-contains, and reports a

@@ -54,7 +54,7 @@ try:
     # run-as can access only the debug app's private, already-sanitized file.
     sanitized = adb("exec-out", "run-as", "com.screensaathi", "cat", relative)
     fixture = json.loads(sanitized)
-    if fixture.get("schemaVersion") != 1 or fixture.get("captureKind") != "sanitized_accessibility":
+    if fixture.get("schemaVersion") != 2 or fixture.get("captureKind") != "sanitized_real":
         fail()
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:

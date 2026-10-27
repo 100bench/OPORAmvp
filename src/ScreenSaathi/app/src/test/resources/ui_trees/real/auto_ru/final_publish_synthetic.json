@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 2,
+  "captureKind": "synthetic",
+  "metadata": {
+    "source": "synthetic",
+    "captureDate": "not_applicable",
+    "deviceModel": "not_applicable",
+    "androidVersion": "not_applicable",
+    "appVersion": "not_applicable",
+    "startState": "final-publish-synthetic"
+  },
+  "packageName": "synthetic.replay.example",
+  "settled": true,
+  "activeDialog": false,
+  "viewport": {
+    "left": 0,
+    "top": 0,
+    "right": 1080,
+    "bottom": 2280
+  },
+  "elements": [
+    {
+      "index": 0,
+      "resourceId": "fixture_resource_0",
+      "text": "Опубликовать",
+      "className": "Button",
+      "bounds": {
+        "left": 40,
+        "top": 200,
+        "right": 1040,
+        "bottom": 300
+      },
+      "editable": false,
+      "clickable": true,
+      "contentDescription": "",
+      "hintText": "",
+      "enabled": true,
+      "selected": false,
+      "checked": false,
+      "scrollable": false,
+      "inputType": 0,
+      "visibleToUser": true,
+      "inDialog": false,
+      "clickableAncestorIndex": null
+    }
+  ]
+}

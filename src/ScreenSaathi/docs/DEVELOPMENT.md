@@ -77,8 +77,10 @@ The no-screenshot/Russian/banking boundary has its own focused suite:
 
 ### UI-tree acceptance fixtures
 
-The fixtures under `app/src/test/resources/ui_trees/` are independent,
-synthetic screen samples. They are not ordered scripts and production code must
+The fixtures under `app/src/test/resources/ui_trees/` are independent samples;
+the original acceptance set is synthetic, while `real/` contains explicitly
+labelled sanitized captures and synthetic fallbacks (see `docs/evals/DATASET.md`).
+They are not ordered scripts and production code must
 not branch on their package names, case ids or sequence. The acceptance harness
 feeds every sample through the real local safety gate, sanitizer, a read-only
 planner fake, target resolver and scenario reducer:
@@ -122,8 +124,8 @@ Build/install the debug APK and keep the Accessibility service bound. From
   'Поиск' 'Продолжить'
 ```
 
-Every optional argument is an explicitly reviewed **static**, non-editable UI
-label. Supply none by default. Never approve user/account/order content,
+Every optional argument is an explicitly reviewed **static** UI label, including
+a hint on a proven-empty editable field. Supply none by default. Never approve user/account/order content,
 addresses, names, phone numbers, email, VINs, plate numbers, OTPs, passwords,
 tokens, bank/payment data or other personal data, even if shown as static text.
 Never capture or store audio. No screenshots, OCR or automatic actions are used.
@@ -132,8 +134,12 @@ calls the planner, STT or TTS, and never authorizes bypassing those boundaries.
 
 The debug-only `FixtureExportReceiver` requires the shell/system DUMP permission.
 It sanitizes entirely in memory before opening an output file under the app's
-private `files/fixtures/`. Password nodes are omitted. Editable `text`, `hintText`
-and `contentDescription` are always empty, including when explicitly approved.
+private `files/fixtures/`. Password nodes are omitted. Editable `text` and
+`contentDescription` are always empty, including when explicitly approved.
+An editable `hintText` survives only when explicitly approved and the reader
+proves the original value empty (blank raw text, or Android showing exactly the
+hint as text). Unknown or filled fields lose their hints. This local emptiness
+flag is never a planner field or serialized fixture field.
 All other text/hints/descriptions become `[REDACTED]` unless their complete value
 is caller-approved; approved labels still pass through phone/email/long-number/
 OTP redaction. Bounds, flags and retained clickable ancestry are preserved for
@@ -166,8 +172,13 @@ file writes**, for example:
 Review the sanitized file before committing it; never attach raw dumps to issues
 or reports. Remove the debug private file with
 `adb shell run-as com.screensaathi rm files/fixtures/search-empty.json` when done.
-The versioned `sanitized_accessibility` schema is for local fixture replay only;
-the decoder rejects raw/legacy schemas and unknown fields. A null viewport is
+The version 2 schema is for local fixture replay only; `captureKind` is
+`sanitized_real` or `synthetic`. Required strict metadata records source, UTC
+capture date, device model, Android/app versions and a safe start-state slug.
+The exporter derives technical values locally; never put account identity into
+the capture name. Synthetic metadata uses `not_applicable` for device/date/version.
+The decoder rejects version 1, raw schemas and unknown fields; recapture older
+fixtures rather than silently inventing provenance. A null viewport is
 an explicit legacy capture until the reader supplies exact application-window
 bounds; do not infer live bounds from the union of nodes.
 

@@ -21,6 +21,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UniversalGuidanceLoopTest {
+    @Test fun `shared id intersects exact safe label without trusting planner index or other ids`() {
+        val first = element(0, "shared", "", 10, editable = true, hint = "Откуда")
+        val second = element(1, "shared", "private value", 200, editable = true, hint = "Куда")
+        val cases = listOf(
+            listOf(first, second) to null,
+            listOf(first.copy(hintText = "Куда"), second) to ScenarioTargetIssue.AMBIGUOUS,
+            listOf(first, second.copy(hintText = "Другое"),
+                second.copy(index = 2, resourceId = "unrelated")) to ScenarioTargetIssue.NOT_FOUND,
+            listOf(first, second.copy(visibleToUser = false),
+                first.copy(index = 2, bounds = testRect(400, 20, 500, 80))) to ScenarioTargetIssue.NOT_VISIBLE,
+            listOf(first, second.copy(hintText = "Куда дальше")) to ScenarioTargetIssue.NOT_FOUND,
+        )
+        cases.forEach { (nodes, issue) ->
+            val raw = ScreenSnapshot("example.generic", true, nodes)
+            val emissions = mutableListOf<UniversalGuidanceEmission>()
+            val planner = RepeatingPlanner(guide("Нажмите поле", "shared", "Куда"))
+            val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+            loop.startGoal("Найти поле")
+            loop.confirmGoal()
+            assertEquals(1, planner.calls)
+            if (issue == null) {
+                assertEquals(ScenarioPhase.GUIDING_STEP, loop.session.phase)
+                assertEquals(200, emissions.single { it.resolvedTarget != null }.resolvedTarget!!.left)
+            } else {
+                assertTrue(issue.name, emissions.any { it.effect == ScenarioEffect.ShowTargetIssue(issue) })
+                assertTrue(emissions.none { it.resolvedTarget != null })
+            }
+        }
+    }
 
     @Test
     fun `replacement stop does not overwrite a fresh recording after deactivation`() {

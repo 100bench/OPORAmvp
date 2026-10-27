@@ -1,4 +1,5 @@
 {
+  "capture_kind": "synthetic",
   "id": "yandex_go_destination",
   "goal": "Заказать такси",
   "package_name": "ru.yandex.taxi",

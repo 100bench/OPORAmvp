@@ -1,4 +1,5 @@
 {
+  "capture_kind": "synthetic",
   "id": "yandex_go_final_handoff",
   "goal": "Проверить заказ",
   "package_name": "ru.yandex.taxi",

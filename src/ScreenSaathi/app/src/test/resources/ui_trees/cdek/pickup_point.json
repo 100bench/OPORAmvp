@@ -1,4 +1,5 @@
 {
+  "capture_kind": "synthetic",
   "id": "cdek_pickup_point",
   "goal": "Выбрать ближайший пункт выдачи",
   "package_name": "com.example.delivery",

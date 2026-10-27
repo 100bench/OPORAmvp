@@ -1,4 +1,5 @@
 {
+  "capture_kind": "synthetic",
   "id": "unknown_app_ordinary",
   "goal": "Открыть справку",
   "package_name": "org.example.unlisted",

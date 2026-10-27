@@ -1,4 +1,5 @@
 {
+  "capture_kind": "synthetic",
   "id": "unknown_app_unusable_tree",
   "goal": "Найти нужный пункт",
   "package_name": "org.example.canvas",

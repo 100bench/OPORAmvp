@@ -6,6 +6,55 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UiTreeFixtureTest {
+    @Test fun `only approved static hint of a proven empty editable survives`() {
+        val source = element(0).copy(editable = true, text = "Куда поедете?",
+            hintText = "Куда поедете?", editableValueEmpty = true)
+        val replay = UiTreeFixtureCodec.decode(UiTreeFixtureCodec.encodeSanitized(snapshot(
+            source, source.copy(index = 1, editableValueEmpty = false),
+            source.copy(index = 2, hintText = "unapproved hint"),
+            source.copy(index = 3, password = true),
+        ), setOf("Куда поедете?")))
+        assertEquals(listOf("Куда поедете?", "", ""), replay.elements.map { it.hintText })
+        assertTrue(replay.elements.all { it.text.isEmpty() && it.contentDescription.isEmpty() })
+        assertFalse(ScreenSanitizer.sanitize(replay).toPromptText().contains("editableValueEmpty"))
+    }
+
+    @Test fun `v2 provenance is required strict and distinguishes synthetic from real`() {
+        val metadata = UiTreeFixtureMetadata("accessibility_debug_export", "2026-10-27", "SM-N975F",
+            "12", "5.98.4", "destination-empty-keyboard")
+        val json = UiTreeFixtureCodec.encodeSanitized(snapshot(element(0)), emptySet(), metadata)
+        val root = JSONObject(json)
+        assertEquals(2, root.getInt("schemaVersion"))
+        assertEquals("sanitized_real", root.getString("captureKind"))
+        assertEquals("SM-N975F", root.getJSONObject("metadata").getString("deviceModel"))
+        UiTreeFixtureCodec.decode(json)
+        val synthetic = JSONObject(UiTreeFixtureCodec.encodeSanitized(snapshot(), emptySet()))
+        assertEquals("synthetic", synthetic.getString("captureKind"))
+        listOf(
+            JSONObject(json).put("schemaVersion", 1),
+            JSONObject(json).apply { put("schemaVersion", 1); put("captureKind", "sanitized_accessibility"); remove("metadata") },
+            JSONObject(json).apply { remove("metadata") },
+            JSONObject(json).put("captureKind", "synthetic"),
+            JSONObject(json).apply { getJSONObject("metadata").put("account", "forbidden") },
+            JSONObject(json).apply { getJSONObject("metadata").put("captureDate", "2026-99-99") },
+        ).forEach {
+            try { UiTreeFixtureCodec.decode(it.toString()); fail("Invalid provenance accepted") }
+            catch (_: IllegalArgumentException) { }
+        }
+    }
+
+    @Test fun `approved empty field hints still pass personal pattern redaction`() {
+        val hint = "sample@example.com"
+        val json = UiTreeFixtureCodec.encodeSanitized(snapshot(element(0).copy(
+            editable = true, text = hint, contentDescription = hint, hintText = hint,
+            editableValueEmpty = true)), setOf(hint))
+        assertFalse(json.contains(hint))
+        val node = UiTreeFixtureCodec.decode(json).elements.single()
+        assertEquals("[EMAIL]", node.hintText)
+        assertEquals("", node.text)
+        assertEquals("", node.contentDescription)
+    }
+
     @Test fun `editable values and unapproved labels never reach the fixture`() {
         val secrets = listOf("private editable value", "private hint", "private description")
         val snapshot = snapshot(

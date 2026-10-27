@@ -5,6 +5,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FinalActionPolicyTest {
+    @Test fun `publishing is a final action but publication settings remain ordinary`() {
+        listOf("Опубликовать", "Опубликовать объявление", "Publish listing").forEach {
+            assertTrue(it, FinalActionPolicy.isFinalAction(it))
+        }
+        listOf("Нажмите «Опубликовать»", "Опубликуйте объявление", "Please tap Publish listing").forEach {
+            assertTrue(it, FinalActionPolicy.containsFinalActionInstruction(it))
+        }
+        listOf("Настройки публикации", "Мои объявления", "Publication history").forEach {
+            assertFalse(it, FinalActionPolicy.isFinalAction(it))
+        }
+    }
     @Test
     fun `final controls and consequential submissions are detected`() {
         listOf(

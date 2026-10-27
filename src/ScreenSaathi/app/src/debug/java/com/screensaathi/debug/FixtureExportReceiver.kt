@@ -7,6 +7,7 @@ import android.content.Intent
 import android.util.Log
 import com.screensaathi.ScreenReaderService
 import com.screensaathi.screen.UiTreeFixtureCodec
+import com.screensaathi.screen.UiTreeFixtureMetadata
 import com.screensaathi.screen.ScreenElementEligibility
 import com.screensaathi.screen.ScreenSanitizer
 import com.screensaathi.screen.eligibility
@@ -30,7 +31,12 @@ class FixtureExportReceiver : BroadcastReceiver() {
             val snapshot = requireNotNull(ScreenReaderService.instance).snapshot()
             require(snapshot.packageName.isNotBlank() && snapshot.elements.isNotEmpty())
             // Complete the privacy boundary before creating directories or opening any file.
-            val sanitized = UiTreeFixtureCodec.encodeSanitized(snapshot, approved)
+            val metadata = UiTreeFixtureMetadata("accessibility_debug_export",
+                java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString(), android.os.Build.MODEL,
+                android.os.Build.VERSION.RELEASE,
+                context.packageManager.getPackageInfo(snapshot.packageName, 0).versionName.orEmpty(),
+                name.lowercase().replace('_', '-'))
+            val sanitized = UiTreeFixtureCodec.encodeSanitized(snapshot, approved, metadata)
             val directory = File(context.filesDir, "fixtures")
             check(directory.isDirectory || directory.mkdirs())
             val temporary = File(directory, "$name.tmp")
@@ -51,6 +57,8 @@ class FixtureExportReceiver : BroadcastReceiver() {
             Log.i(TAG, "success elements=${snapshot.elements.count { !it.password }} " +
                 "viewport=${snapshot.viewport} eligibility=$eligibility " +
                 "providerElements=${ScreenSanitizer.sanitize(snapshot).elements.size} path=files/fixtures/$name.json")
+            Log.i(TAG, "emptyEditable=${snapshot.elements.count { it.editableValueEmpty }} " +
+                "approvedEmptyHints=${snapshot.elements.count { it.editableValueEmpty && it.hintText in approved }}")
         } catch (_: Exception) {
             // No exception/cause logging: JSON and accessibility errors can contain user data.
             Log.w(TAG, "failure")

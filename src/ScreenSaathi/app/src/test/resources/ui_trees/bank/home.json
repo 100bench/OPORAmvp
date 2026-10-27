@@ -1,4 +1,5 @@
 {
+  "capture_kind": "synthetic",
   "id": "bank_home",
   "goal": "Посмотреть главный экран",
   "package_name": "ru.sberbankmobile",

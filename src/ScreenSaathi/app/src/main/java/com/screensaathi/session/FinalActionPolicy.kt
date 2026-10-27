@@ -10,6 +10,7 @@ object FinalActionPolicy {
         if (normalized.isEmpty()) return false
         val plain = normalized.trim('«', '»', '"', '\'', '.', ',', ':', ';', '!', '?')
         return plain in EXACT_FINAL_LABELS ||
+            PUBLICATION_CONTROL.containsMatchIn(normalized) ||
             RUSSIAN_FINAL_LABEL.containsMatchIn(normalized) ||
             RUSSIAN_CONTEXTUAL_SUBMISSION.containsMatchIn(normalized) ||
             ENGLISH_FINAL_CONTROL.containsMatchIn(normalized) ||
@@ -23,6 +24,8 @@ object FinalActionPolicy {
         if (normalized.isEmpty()) return false
         val plain = normalized.trim('«', '»', '"', '\'', '.', ',', ':', ';', '!', '?')
         return plain in EXACT_FINAL_LABELS ||
+            PUBLICATION_CONTROL.containsMatchIn(normalized) ||
+            PUBLICATION_DIRECTIVE.containsMatchIn(normalized) ||
             LEADING_FINAL_IMPERATIVE.containsMatchIn(normalized) ||
             DIRECTIVE_TO_FINAL_ACTION.containsMatchIn(normalized) ||
             DIRECTIVE_TO_PURCHASE.containsMatchIn(normalized)
@@ -46,6 +49,15 @@ object FinalActionPolicy {
         "submit",
         "confirm",
         "purchase",
+    )
+
+    private val PUBLICATION_CONTROL = Regex(
+        "^(?:опубликовать|опубликуйте|publish)(?:$|[^\\p{L}\\p{N}])",
+        RegexOption.IGNORE_CASE,
+    )
+    private val PUBLICATION_DIRECTIVE = Regex(
+        "(?:^|[^\\p{L}\\p{N}])(?:нажмите|выберите|коснитесь|tap|press|select|choose|click)(?:$|[^\\p{L}\\p{N}]).{0,120}(?:опубликовать|publish)(?:$|[^\\p{L}\\p{N}])",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
     )
 
     private val RUSSIAN_FINAL_LABEL = Regex(
