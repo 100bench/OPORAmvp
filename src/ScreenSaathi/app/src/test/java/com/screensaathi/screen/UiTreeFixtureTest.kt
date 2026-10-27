@@ -58,7 +58,7 @@ class UiTreeFixtureTest {
     }
 
     @Test fun `structural geometry role ids and flags survive replay`() {
-        val source = snapshot(element(7).copy(resourceId = "example:id/search", className = "EditText",
+        val source = snapshot(element(7).copy(resourceId = "android:id/button1", className = "EditText",
             editable = true, clickable = true, enabled = false, selected = true, checked = true,
             scrollable = true, inputType = 2, visibleToUser = false, inDialog = true),
             element(8).copy(clickableAncestorIndex = 7))
@@ -70,7 +70,7 @@ class UiTreeFixtureTest {
         assertEquals(ScreenViewport(0, 24, 1080, 2100), replay.viewport)
         with(replay.elements.first()) {
             assertEquals(7, index)
-            assertEquals("example:id/search", resourceId)
+            assertEquals("android:id/button1", resourceId)
             assertEquals("EditText", className)
             assertEquals(listOf(10, 20, 110, 120), listOf(bounds.left, bounds.top, bounds.right, bounds.bottom))
             assertTrue(editable && clickable && selected && checked && scrollable && inDialog)
@@ -81,6 +81,39 @@ class UiTreeFixtureTest {
         assertNull(UiTreeFixtureCodec.decode(UiTreeFixtureCodec.encodeSanitized(snapshot(), emptySet())).viewport)
     }
 
+    @Test fun `external identifiers are opaque before serialization even with empty approval`() {
+        val ids = listOf("plate_A123BC77", "vin_WVWZZZ1JZXW000001", "address_Private_Street")
+        val roles = listOf("Private_Person_View", "plate_A123BC77_View", "address_Private_Street_View")
+        val source = snapshot(*ids.mapIndexed { i, id ->
+            element(i).copy(resourceId = id, className = roles[i])
+        }.toTypedArray())
+        val json = UiTreeFixtureCodec.encodeSanitized(source, emptySet())
+        assertTrue("External identifiers reached serialization", (ids + roles).none { json.contains(it) })
+        val replay = UiTreeFixtureCodec.decode(json)
+        assertEquals(3, replay.elements.map { it.resourceId }.toSet().size)
+        assertEquals(3, replay.elements.map { it.className }.toSet().size)
+        assertTrue(replay.elements.all { it.resourceId.isNotBlank() && it.className.isNotBlank() })
+    }
+
+    @Test fun `opaque identifiers retain equality and distinction without trusting label approval`() {
+        val first = element(0).copy(resourceId = "plate_A123BC77", className = "Private_Person_View")
+        val second = first.copy(index = 1, clickableAncestorIndex = 0)
+        val third = first.copy(index = 2, resourceId = "plate_B456CD78", className = "Another_Private_View")
+        val source = snapshot(first, second, third)
+        val labels = setOf(first.resourceId, first.className, third.resourceId, third.className)
+        val json = UiTreeFixtureCodec.encodeSanitized(source, labels)
+        assertTrue("Label approval bypassed identifier privacy", labels.none { json.contains(it) })
+        val replay = UiTreeFixtureCodec.decode(json)
+        assertEquals(replay.elements[0].resourceId, replay.elements[1].resourceId)
+        assertEquals(replay.elements[0].className, replay.elements[1].className)
+        assertNotEquals(replay.elements[0].resourceId, replay.elements[2].resourceId)
+        assertNotEquals(replay.elements[0].className, replay.elements[2].className)
+        assertEquals(0, replay.elements[1].clickableAncestorIndex)
+        val repeat = UiTreeFixtureCodec.decode(UiTreeFixtureCodec.encodeSanitized(source, emptySet()))
+        assertEquals(replay.elements.map { it.resourceId }, repeat.elements.map { it.resourceId })
+        assertEquals(replay.elements.map { it.className }, repeat.elements.map { it.className })
+    }
+
     @Test fun `decoder rejects raw legacy unknown and unsafe fixture payloads`() {
         val safe = UiTreeFixtureCodec.encodeSanitized(snapshot(element(0)), emptySet())
         val invalid = listOf("{}", JSONObject(safe).put("schemaVersion", 99).toString(),
@@ -88,6 +121,8 @@ class UiTreeFixtureTest {
             JSONObject(safe).put("rawTree", "forbidden").toString(),
             JSONObject(safe).apply { getJSONArray("elements").getJSONObject(0).put("password", true) }.toString(),
             JSONObject(safe).apply { getJSONArray("elements").getJSONObject(0).put("text", "code 482913") }.toString(),
+            JSONObject(safe).apply { getJSONArray("elements").getJSONObject(0).put("resourceId", "plate_A123BC77") }.toString(),
+            JSONObject(safe).apply { getJSONArray("elements").getJSONObject(0).put("className", "Private_Person_View") }.toString(),
             JSONObject(safe).apply { getJSONArray("elements").getJSONObject(0).put("editable", true)
                 .put("text", "value") }.toString())
         invalid.forEach { json ->

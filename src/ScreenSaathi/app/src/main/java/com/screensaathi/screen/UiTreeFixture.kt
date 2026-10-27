@@ -40,6 +40,18 @@ object UiTreeFixtureCodec {
     private const val VERSION = 1
     private const val KIND = "sanitized_accessibility"
     private const val REDACTED = "[REDACTED]"
+    // Exact generic Android structure only: never infer trust from an ID's format or label approval.
+    private val TRUSTED_RESOURCE_IDS = setOf(
+        "parentPanel", "buttonPanel", "contentPanel", "alertTitle", "message", "button1", "button2", "button3",
+    ).let { names -> names + names.map { "android:id/$it" } }
+    private val TRUSTED_ROLES = setOf(
+        "View", "ViewGroup", "TextView", "EditText", "Button", "ImageButton", "ImageView",
+        "CheckBox", "RadioButton", "Switch", "ToggleButton", "Spinner", "SeekBar", "ProgressBar",
+        "ScrollView", "HorizontalScrollView", "ListView", "RecyclerView", "WebView",
+        "FrameLayout", "LinearLayout", "RelativeLayout", "ConstraintLayout", "Dialog", "AlertDialog",
+    )
+    private val RESOURCE_ALIAS = Regex("fixture_resource_[0-9a-z]+")
+    private val ROLE_ALIAS = Regex("fixture_role_[0-9a-z]+")
 
     fun encodeSanitized(snapshot: ScreenSnapshot, approvedStaticLabels: Set<String>): String {
         fun label(value: String, editable: Boolean): String = when {
@@ -49,11 +61,21 @@ object UiTreeFixtureCodec {
         }
         val retained = snapshot.elements.filterNot { it.password }
         val indices = retained.map { it.index }.toSet()
+        // Encounter-order aliases retain equality inside a fixture without persisting substrings,
+        // hashes or reversible encodings of external identifiers. Maps never leave memory.
+        val resourceAliases = mutableMapOf<String, String>()
+        val roleAliases = mutableMapOf<String, String>()
+        fun resourceId(value: String) = when {
+            value.isEmpty() || value in TRUSTED_RESOURCE_IDS -> value
+            else -> resourceAliases.getOrPut(value) { "fixture_resource_${resourceAliases.size.toString(36)}" }
+        }
+        fun role(value: String) = if (value in TRUSTED_ROLES) value else
+            roleAliases.getOrPut(value) { "fixture_role_${roleAliases.size.toString(36)}" }
         // Finish sanitizing all strings in memory before constructing the serialized payload.
         val fixture = UiTreeFixture(VERSION, KIND, safeValue(snapshot.packageName), snapshot.settled,
             snapshot.activeDialog, snapshot.viewport, retained.map { e ->
-                UiTreeFixtureElement(e.index, safeValue(e.resourceId), label(e.text, e.editable),
-                    safeValue(e.className), ScreenViewport(e.bounds.left, e.bounds.top, e.bounds.right, e.bounds.bottom),
+                UiTreeFixtureElement(e.index, resourceId(e.resourceId), label(e.text, e.editable),
+                    role(e.className), ScreenViewport(e.bounds.left, e.bounds.top, e.bounds.right, e.bounds.bottom),
                     e.editable, e.clickable, label(e.contentDescription, e.editable), label(e.hintText, e.editable),
                     e.enabled, e.selected, e.checked, e.scrollable, e.inputType, e.visibleToUser, e.inDialog,
                     e.clickableAncestorIndex?.takeIf { it in indices })
@@ -88,7 +110,11 @@ object UiTreeFixtureCodec {
             val hint = e.safeString("hintText")
             require(!editable || (text.isEmpty() && description.isEmpty() && hint.isEmpty()))
             val bounds = e.getJSONObject("bounds").viewport()
-            ScreenElement(e.getInt("index"), e.safeString("resourceId"), text, e.safeString("className"),
+            val resourceId = e.getString("resourceId")
+            val role = e.getString("className")
+            require(resourceId.isEmpty() || resourceId in TRUSTED_RESOURCE_IDS || RESOURCE_ALIAS.matches(resourceId))
+            require(role in TRUSTED_ROLES || ROLE_ALIAS.matches(role))
+            ScreenElement(e.getInt("index"), resourceId, text, role,
                 Rect().apply { left = bounds.left; top = bounds.top; right = bounds.right; bottom = bounds.bottom },
                 editable, e.getBoolean("clickable"), description, hint, e.getBoolean("enabled"),
                 e.getBoolean("selected"), e.getBoolean("checked"), e.getBoolean("scrollable"),

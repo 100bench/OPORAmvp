@@ -136,10 +136,17 @@ private `files/fixtures/`. Password nodes are omitted. Editable `text`, `hintTex
 and `contentDescription` are always empty, including when explicitly approved.
 All other text/hints/descriptions become `[REDACTED]` unless their complete value
 is caller-approved; approved labels still pass through phone/email/long-number/
-OTP redaction. Bounds, roles, flags, resource IDs and retained clickable ancestry
-are preserved for local replay; structural strings also pass through pattern
-redaction. Review structural identifiers as well as approved labels before
-staging: pattern matching cannot identify every personal value or dynamic ID.
+OTP redaction. Bounds, flags and retained clickable ancestry are preserved for
+local replay. Resource IDs survive verbatim only from the codec's explicit,
+short allowlist of generic Android dialog structure; class names survive only
+from its fixed standard-role allowlist. All other external IDs/classes become
+opaque encounter-order aliases **in memory before any file is opened**. Equal
+IDs/classes retain equal aliases and distinct values remain distinct within a
+fixture. Aliases contain no raw substrings, hashes or encoded personal values;
+they are not identities for matching a later live tree. Static-label approval
+cannot authorize an external ID or class name. Future live evaluations must use
+the same safe alias trees and separate physical smoke checks. Review approved
+labels before staging: pattern matching cannot identify every personal value.
 The receiver logs only status, count and a safe private relative path; failures
 never log the tree, arguments or exception content. The receiver and manifest
 entry are absent from release builds.
