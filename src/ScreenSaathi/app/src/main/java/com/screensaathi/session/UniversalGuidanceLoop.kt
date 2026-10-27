@@ -221,11 +221,17 @@ class UniversalGuidanceLoop(
         token: Long,
         suppressRecognition: Boolean = false,
         staleReplans: Int = 0,
+        expectedAttempt: PlanningAttempt? = null,
+        targetToCommit: ResolvedScenarioTarget? = null,
     ) {
         if (token != generation.get()) return
         val transition = synchronized(lock) {
             if (token != generation.get()) return
+            if (expectedAttempt != null &&
+                (inFlightAttempt !== expectedAttempt || state.phase != ScenarioPhase.ANALYZING_SCREEN)) return
+            if (targetToCommit != null && state.phase != ScenarioPhase.ANALYZING_SCREEN) return
             val next = ScenarioReducer.reduce(state, event, clock())
+            if (targetToCommit != null) pendingTarget = targetToCommit
             state = next.session
             next
         }
@@ -234,21 +240,38 @@ class UniversalGuidanceLoop(
                 token == generation.get() &&
                 !(suppressRecognition && effect == ScenarioEffect.BeginRecognition)
             ) {
-                execute(effect, token, staleReplans)
+                execute(effect, token, staleReplans, expectedAttempt)
             }
         }
     }
 
-    private fun execute(effect: ScenarioEffect, token: Long, staleReplans: Int = 0) {
+    private fun execute(
+        effect: ScenarioEffect,
+        token: Long,
+        staleReplans: Int = 0,
+        expectedAttempt: PlanningAttempt? = null,
+    ) {
+        if (token != generation.get()) return
+        if (expectedAttempt != null && synchronized(lock) { inFlightAttempt !== expectedAttempt }) return
         when (effect) {
-            ScenarioEffect.AnalyzeCurrentScreen -> analyzeCurrentScreen(token)
-            is ScenarioEffect.RetryPlanning -> analyzeCurrentScreen(token, effect.attempt, staleReplans)
+            ScenarioEffect.AnalyzeCurrentScreen -> analyzeCurrentScreen(token, predecessor = expectedAttempt)
+            is ScenarioEffect.RetryPlanning -> analyzeCurrentScreen(
+                token, effect.attempt, staleReplans, predecessor = expectedAttempt,
+            )
             ScenarioEffect.ClearHighlight -> {
-                synchronized(lock) { pendingTarget = null }
+                synchronized(lock) {
+                    if (token != generation.get() ||
+                        (expectedAttempt != null && inFlightAttempt !== expectedAttempt)) return
+                    pendingTarget = null
+                }
                 emit(UniversalGuidanceEmission(effect))
             }
             is ScenarioEffect.ShowGuidance -> {
-                val target = synchronized(lock) { pendingTarget }
+                val target = synchronized(lock) {
+                    if (token != generation.get() ||
+                        (expectedAttempt != null && inFlightAttempt !== expectedAttempt)) return
+                    pendingTarget
+                }
                 emit(UniversalGuidanceEmission(effect, target))
             }
             else -> emit(UniversalGuidanceEmission(effect))
@@ -259,26 +282,30 @@ class UniversalGuidanceLoop(
         token: Long,
         attemptKind: ScenarioPlanningAttempt = ScenarioPlanningAttempt.PRIMARY,
         staleReplans: Int = 0,
+        predecessor: PlanningAttempt? = null,
     ) {
         if (token != generation.get()) return
-        val before = session
+        val before = synchronized(lock) {
+            if (predecessor != null && inFlightAttempt !== predecessor) return
+            state
+        }
         if (before.phase != ScenarioPhase.ANALYZING_SCREEN) return
 
         val raw = snapshotProvider()
         val fingerprint = raw.signature()
         val snapshotIdentity = raw.localIdentity()
         if (fingerprint.isNotBlank() && fingerprint != before.screenFingerprint) {
-            dispatch(ScenarioEvent.ScreenObserved(fingerprint), token)
+            dispatch(ScenarioEvent.ScreenObserved(fingerprint), token, expectedAttempt = predecessor)
         }
 
         val safety = assess(raw)
         when (safety.disposition) {
             ScreenDisposition.PAUSE_AUTH -> {
-                dispatch(ScenarioEvent.AuthenticationRequired, token)
+                dispatch(ScenarioEvent.AuthenticationRequired, token, expectedAttempt = predecessor)
                 return
             }
             ScreenDisposition.SAFE_HANDOFF -> {
-                dispatch(ScenarioEvent.SafeHandoffRequired, token)
+                dispatch(ScenarioEvent.SafeHandoffRequired, token, expectedAttempt = predecessor)
                 return
             }
             ScreenDisposition.ALLOW -> Unit
@@ -286,58 +313,60 @@ class UniversalGuidanceLoop(
 
         if (raw.activeDialog) {
             if (!raw.settled) {
-                waitForModalSettle(token)
+                waitForModalSettle(token, predecessor)
                 return
             }
             val fresh = snapshotProvider()
             if (token != generation.get()) return
             when (assess(fresh).disposition) {
                 ScreenDisposition.PAUSE_AUTH -> {
-                    dispatch(ScenarioEvent.AuthenticationRequired, token)
+                    dispatch(ScenarioEvent.AuthenticationRequired, token, expectedAttempt = predecessor)
                     return
                 }
                 ScreenDisposition.SAFE_HANDOFF -> {
-                    dispatch(ScenarioEvent.SafeHandoffRequired, token)
+                    dispatch(ScenarioEvent.SafeHandoffRequired, token, expectedAttempt = predecessor)
                     return
                 }
                 ScreenDisposition.ALLOW -> Unit
             }
             if (!fresh.settled) {
-                waitForModalSettle(token)
+                waitForModalSettle(token, predecessor)
                 return
             }
             if (fresh.localIdentity() != snapshotIdentity) {
                 if (staleReplans >= MAX_STALE_REPLANS) {
-                    dispatch(ScenarioEvent.ManualDismissRequired, token)
+                    dispatch(ScenarioEvent.ManualDismissRequired, token, expectedAttempt = predecessor)
                 } else {
                     analyzeCurrentScreen(token,
-                        staleReplans = staleReplans + 1)
+                        staleReplans = staleReplans + 1, predecessor = predecessor)
                 }
                 return
             }
-            synchronized(lock) { modalSettleChecks = 0 }
+            synchronized(lock) {
+                if (token != generation.get() ||
+                    (predecessor != null && inFlightAttempt !== predecessor)) return
+                modalSettleChecks = 0
+            }
         }
 
         when (val modal = ModalDismissResolver.resolve(raw)) {
             ModalDismissResolver.Result.NotModal -> Unit
             ModalDismissResolver.Result.ManualDismiss -> {
-                dispatch(ScenarioEvent.ManualDismissRequired, token)
+                dispatch(ScenarioEvent.ManualDismissRequired, token, expectedAttempt = predecessor)
                 return
             }
             is ModalDismissResolver.Result.CloseTarget -> {
                 val close = modal.element
-                synchronized(lock) {
-                    pendingTarget = ResolvedScenarioTarget(
-                        left = close.bounds.left,
-                        top = close.bounds.top,
-                        right = close.bounds.right,
-                        bottom = close.bounds.bottom,
-                        fingerprint = fingerprint,
-                        snapshotIdentity = snapshotIdentity,
-                        resourceId = close.resourceId.takeIf(String::isNotBlank),
-                        text = close.text.takeIf(String::isNotBlank),
-                    )
-                }
+                val target = ResolvedScenarioTarget(
+                    left = close.bounds.left,
+                    top = close.bounds.top,
+                    right = close.bounds.right,
+                    bottom = close.bounds.bottom,
+                    fingerprint = fingerprint,
+                    snapshotIdentity = snapshotIdentity,
+                    resourceId = close.resourceId.takeIf(String::isNotBlank),
+                    text = close.text.takeIf(String::isNotBlank),
+                )
                 dispatch(
                     ScenarioEvent.ModalCloseAvailable(
                         ScenarioGuidance(
@@ -349,6 +378,8 @@ class UniversalGuidanceLoop(
                         )
                     ),
                     token,
+                    expectedAttempt = predecessor,
+                    targetToCommit = target,
                 )
                 return
             }
@@ -360,23 +391,27 @@ class UniversalGuidanceLoop(
         // away from the current surface. Recover locally instead of offering
         // an app launch over a screen the gate could not inspect.
         if (!raw.settled || safeScreen.elements.isEmpty() || fingerprint.isBlank()) {
-            dispatch(ScenarioEvent.TargetNotFound, token)
+            dispatch(ScenarioEvent.TargetNotFound, token, expectedAttempt = predecessor)
             return
         }
 
         val current = session
         val targetPackage = current.targetPackage
         if (!targetPackage.isNullOrBlank() && raw.packageName != targetPackage) {
-            dispatch(ScenarioEvent.TargetAppRequired, token)
+            dispatch(ScenarioEvent.TargetAppRequired, token, expectedAttempt = predecessor)
             return
         }
 
         val attempt = synchronized(lock) {
             if (token != generation.get() || state.phase != ScenarioPhase.ANALYZING_SCREEN) return
+            if (predecessor != null && inFlightAttempt !== predecessor) return
             val existing = inFlightAttempt
             if (existing?.fingerprint == snapshotIdentity &&
                 (attemptKind == ScenarioPlanningAttempt.PRIMARY ||
                     existing.kind == ScenarioPlanningAttempt.FORMAT_REPAIR)) return
+            if (attemptKind == ScenarioPlanningAttempt.FORMAT_REPAIR &&
+                (predecessor == null || existing !== predecessor ||
+                    predecessor.kind != ScenarioPlanningAttempt.PRIMARY)) return
             // A repair belongs to the original tree. A new tree gets a primary call.
             val kind = if (existing?.fingerprint != snapshotIdentity) {
                 ScenarioPlanningAttempt.PRIMARY
@@ -400,28 +435,28 @@ class UniversalGuidanceLoop(
             val latestFingerprint = latest.signature()
             when (assess(latest).disposition) {
                 ScreenDisposition.PAUSE_AUTH -> {
-                    dispatch(ScenarioEvent.AuthenticationRequired, token)
+                    dispatch(ScenarioEvent.AuthenticationRequired, token, expectedAttempt = attempt)
                     return
                 }
                 ScreenDisposition.SAFE_HANDOFF -> {
-                    dispatch(ScenarioEvent.SafeHandoffRequired, token)
+                    dispatch(ScenarioEvent.SafeHandoffRequired, token, expectedAttempt = attempt)
                     return
                 }
                 ScreenDisposition.ALLOW -> Unit
             }
             val latestSafe = ScreenSanitizer.sanitize(latest)
             if (!latest.settled || latestSafe.elements.isEmpty() || latestFingerprint.isBlank()) {
-                dispatch(ScenarioEvent.TargetNotFound, token)
+                dispatch(ScenarioEvent.TargetNotFound, token, expectedAttempt = attempt)
                 return
             }
             if (latest.localIdentity() != snapshotIdentity) {
                 if (staleReplans >= MAX_STALE_REPLANS) {
-                    dispatch(ScenarioEvent.TargetNotFound, token)
+                    dispatch(ScenarioEvent.TargetNotFound, token, expectedAttempt = attempt)
                 } else {
                     if (latestFingerprint != fingerprint) {
-                        dispatch(ScenarioEvent.ScreenObserved(latestFingerprint), token)
+                        dispatch(ScenarioEvent.ScreenObserved(latestFingerprint), token, expectedAttempt = attempt)
                     }
-                    analyzeCurrentScreen(token, staleReplans = staleReplans + 1)
+                    analyzeCurrentScreen(token, staleReplans = staleReplans + 1, predecessor = attempt)
                 }
                 return
             }
@@ -431,8 +466,9 @@ class UniversalGuidanceLoop(
                     ScenarioEvent.PlannerFailed(outcome.kind.toScenarioFailure()),
                     token,
                     staleReplans = staleReplans,
+                    expectedAttempt = attempt,
                 )
-                is PlannerOutcome.Success -> acceptPlan(outcome.plan, raw, token, staleReplans)
+                is PlannerOutcome.Success -> acceptPlan(outcome.plan, raw, token, staleReplans, attempt)
             }
         } finally {
             synchronized(lock) {
@@ -441,15 +477,17 @@ class UniversalGuidanceLoop(
         }
     }
 
-    private fun waitForModalSettle(token: Long) {
+    private fun waitForModalSettle(token: Long, expectedAttempt: PlanningAttempt? = null) {
         val retry = synchronized(lock) {
+            if (token != generation.get() ||
+                (expectedAttempt != null && inFlightAttempt !== expectedAttempt)) return
             if (modalSettleChecks < MAX_MODAL_SETTLE_CHECKS) {
                 modalSettleChecks++
                 true
             } else false
         }
-        if (retry) execute(ScenarioEffect.RecheckModalAfterSettling, token)
-        else dispatch(ScenarioEvent.ManualDismissRequired, token)
+        if (retry) execute(ScenarioEffect.RecheckModalAfterSettling, token, expectedAttempt = expectedAttempt)
+        else dispatch(ScenarioEvent.ManualDismissRequired, token, expectedAttempt = expectedAttempt)
     }
 
     private fun acceptPlan(
@@ -457,14 +495,15 @@ class UniversalGuidanceLoop(
         raw: ScreenSnapshot,
         token: Long,
         staleReplans: Int,
+        attempt: PlanningAttempt,
     ) {
         if (!SafetyGuard.isReadOnlyGuidanceAction(plan.actionType)) {
             dispatch(ScenarioEvent.PlannerFailed(ScenarioPlanningFailure.INVALID_RESPONSE), token,
-                staleReplans = staleReplans)
+                staleReplans = staleReplans, expectedAttempt = attempt)
             return
         }
         if (plan.isDone || plan.actionType == "answer") {
-            dispatch(ScenarioEvent.PlannerAnswered(plan.instruction), token)
+            dispatch(ScenarioEvent.PlannerAnswered(plan.instruction), token, expectedAttempt = attempt)
             return
         }
 
@@ -476,30 +515,30 @@ class UniversalGuidanceLoop(
         }.getOrNull()
         if (semanticTarget == null) {
             dispatch(ScenarioEvent.PlannerFailed(ScenarioPlanningFailure.INVALID_RESPONSE), token,
-                staleReplans = staleReplans)
+                staleReplans = staleReplans, expectedAttempt = attempt)
             return
         }
 
         val result = resolve(plan, raw)
         if (result !is TargetResolver.Result.Found) {
-            dispatch(ScenarioEvent.TargetUnavailable(result.toTargetIssue()), token)
+            dispatch(ScenarioEvent.TargetUnavailable(result.toTargetIssue()), token, expectedAttempt = attempt)
             return
         }
 
         val bounds = result.candidate.bounds
-        synchronized(lock) {
-            pendingTarget = ResolvedScenarioTarget(
-                bounds.left, bounds.top, bounds.right, bounds.bottom,
-                raw.signature(), raw.localIdentity(),
-                result.candidate.element.resourceId.takeIf(String::isNotBlank),
-                plan.targetText.takeIf(String::isNotBlank),
-            )
-        }
+        val target = ResolvedScenarioTarget(
+            bounds.left, bounds.top, bounds.right, bounds.bottom,
+            raw.signature(), raw.localIdentity(),
+            result.candidate.element.resourceId.takeIf(String::isNotBlank),
+            plan.targetText.takeIf(String::isNotBlank),
+        )
         dispatch(
             ScenarioEvent.PlannerGuided(
                 ScenarioGuidance(plan.instruction, semanticTarget)
             ),
             token,
+            expectedAttempt = attempt,
+            targetToCommit = target,
         )
     }
 

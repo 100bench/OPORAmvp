@@ -157,6 +157,95 @@ class UniversalGuidanceLoopTest {
     }
 
     @Test
+    fun `stale malformed response cannot repair a newer in flight attempt`() =
+        assertSupersededResponseIsIgnored(
+            PlannerOutcome.Failure(PlannerFailureKind.INVALID_RESPONSE, "bad schema"),
+        )
+
+    @Test
+    fun `stale valid response cannot commit guidance over a newer in flight attempt`() =
+        assertSupersededResponseIsIgnored(guide("Нажмите старое поле.", resourceId = "destination"))
+
+    private fun assertSupersededResponseIsIgnored(staleOutcome: PlannerOutcome) {
+        val original = stableScreen()
+        val next = screen("next", "search", "Поиск", 10)
+        val current = AtomicReference(original)
+        val oldAtFreshnessRead = CountDownLatch(1)
+        val releaseOldRead = CountDownLatch(1)
+        val newerPlanning = CountDownLatch(1)
+        val releaseNewerPlan = CountDownLatch(1)
+        val oldReturned = java.util.concurrent.atomic.AtomicBoolean()
+        val pausedOldRead = java.util.concurrent.atomic.AtomicBoolean()
+        val oldThread = AtomicReference<Thread>()
+        val failure = AtomicReference<Throwable>()
+        val flags = java.util.Collections.synchronizedList(mutableListOf<Boolean>())
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val planner = object : GuidancePlanner {
+            override fun planNext(screen: PlannerScreen, goal: String, stepNumber: Int,
+                lastSafeInstruction: String?, repairFormat: Boolean): PlannerOutcome {
+                flags += repairFormat
+                return when (calls.incrementAndGet()) {
+                    1 -> staleOutcome.also { oldReturned.set(true) }
+                    2 -> {
+                        newerPlanning.countDown()
+                        check(releaseNewerPlan.await(5, TimeUnit.SECONDS))
+                        guide("Нажмите поиск.", resourceId = "search")
+                    }
+                    else -> guide("Лишний запрос.", resourceId = "search")
+                }
+            }
+        }
+        val emissions = java.util.Collections.synchronizedList(mutableListOf<UniversalGuidanceEmission>())
+        val loop = UniversalGuidanceLoop(planner, snapshotProvider = {
+            val captured = current.get()
+            if (Thread.currentThread() === oldThread.get() && oldReturned.get() &&
+                pausedOldRead.compareAndSet(false, true)) {
+                oldAtFreshnessRead.countDown()
+                check(releaseOldRead.await(5, TimeUnit.SECONDS))
+            }
+            captured
+        }, clock = { 1L }, emit = emissions::add)
+        val old = Thread {
+            try { loop.startGoal("Найти поле") } catch (error: Throwable) { failure.set(error) }
+        }.also { oldThread.set(it) }
+        val newer = Thread {
+            try { loop.recheckCurrentScreen() } catch (error: Throwable) { failure.set(error) }
+        }
+        var phaseAfterOld: ScenarioPhase? = null
+        var failuresAfterOld = -1
+        var confirmationsAfterOld = -1
+        old.start()
+        try {
+            assertTrue(oldAtFreshnessRead.await(5, TimeUnit.SECONDS))
+            current.set(next)
+            newer.start()
+            assertTrue(newerPlanning.await(5, TimeUnit.SECONDS))
+            releaseOldRead.countDown()
+            old.join(5_000)
+            assertFalse(old.isAlive)
+            phaseAfterOld = loop.session.phase
+            failuresAfterOld = loop.session.replanFailures
+            confirmationsAfterOld = emissions.count { it.effect is ScenarioEffect.ConfirmGoal }
+        } finally {
+            releaseOldRead.countDown()
+            releaseNewerPlan.countDown()
+            old.join(5_000)
+            newer.join(5_000)
+        }
+        failure.get()?.let { throw AssertionError("Concurrent worker failed", it) }
+        assertFalse(newer.isAlive)
+        assertEquals(ScenarioPhase.ANALYZING_SCREEN, phaseAfterOld)
+        assertEquals(0, failuresAfterOld)
+        assertEquals(0, confirmationsAfterOld)
+        assertEquals(listOf(false, false), flags.toList())
+        assertEquals(ScenarioPhase.CONFIRMING_GOAL, loop.session.phase)
+        loop.confirmGoal()
+        val shown = emissions.single { it.effect is ScenarioEffect.ShowGuidance }
+        assertEquals("search", shown.resolvedTarget?.resourceId)
+        assertEquals(next.signature(), shown.resolvedTarget?.fingerprint)
+    }
+
+    @Test
     fun `format repair is capped at one and its local miss never requests a third call`() {
         listOf(
             PlannerOutcome.Failure(PlannerFailureKind.INVALID_RESPONSE, "bad schema"),
