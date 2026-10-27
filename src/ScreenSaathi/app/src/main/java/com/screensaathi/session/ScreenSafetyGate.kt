@@ -71,7 +71,13 @@ object ScreenSafetyGate {
             it.visibilityEligibility(snapshot.viewportOrLegacy) == ScreenElementEligibility.Eligible
         }
         // Authentication wins over financial/final labels elsewhere on the screen.
-        val keypadVisible = visibleElements.any { KEYPAD_CONTEXT.containsMatchIn(it.resourceId) }
+        val keypadVisible = visibleElements.any { KEYPAD_CONTEXT.containsMatchIn(it.resourceId) } ||
+            visibleElements.asSequence()
+                .filter { it.clickable && !it.editable }
+                .mapNotNull { node ->
+                    visibleLabels(node).map(String::trim).firstOrNull { it.length == 1 && it[0] in '0'..'9' }
+                }
+                .toSet().size == 10
         val pinInputContext = keypadVisible || visibleElements.any { it.editable }
         for (element in visibleElements) {
             authenticationEvidence(element, pinInputContext, keypadVisible)?.let {
@@ -117,12 +123,13 @@ object ScreenSafetyGate {
     ): AuthenticationEvidence? {
         if (element.password) return AuthenticationEvidence.PASSWORD_NODE
         if (isPasswordInputType(element.inputType)) return AuthenticationEvidence.PASSWORD_INPUT_TYPE
+        val locationMarker = !element.editable && LOCATION_PIN.containsMatchIn(element.resourceId)
         for (value in visibleLabels(element)) {
             if (PASSWORD_TEXT.containsMatchIn(value)) return AuthenticationEvidence.PASSWORD_TEXT
             if (OTP_OR_SMS.containsMatchIn(value)) return AuthenticationEvidence.OTP_OR_SMS_TEXT
             if (BIOMETRIC_TEXT.containsMatchIn(value)) return AuthenticationEvidence.BIOMETRIC_TEXT
             if (PIN_TOKEN.containsMatchIn(value) && !LOCATION_PIN.containsMatchIn(value) &&
-                (PIN_SECRET_CONTEXT.containsMatchIn(value) || pinInputContext)
+                (PIN_SECRET_CONTEXT.containsMatchIn(value) || (pinInputContext && !locationMarker))
             ) return AuthenticationEvidence.PIN_INPUT_CONTEXT
         }
         // Resource tokens alone are weak. Require an actual editable PIN input

@@ -16,6 +16,37 @@ import java.util.concurrent.TimeUnit
 class BankSafetyIntegrationTest {
 
     @Test
+    fun `PIN slots and generic digit keypad stop before planner recorder and speech`() {
+        fun node(index: Int, id: String, text: String, clickable: Boolean) = ScreenElement(
+            index = index, resourceId = id, text = text, className = "Button",
+            bounds = Rect().apply { right = 100; bottom = 100 },
+            editable = false, clickable = clickable,
+        )
+        val screen = ScreenSnapshot("ordinary.example", true,
+            listOf(node(0, "pin_slot", "", false)) + (0..9).map { node(it + 1, "", it.toString(), true) },
+            viewport = ScreenViewport(0, 0, 200, 200),
+        )
+        var plannerCalls = 0
+        val planner = object : GuidancePlanner {
+            override fun planNext(screen: PlannerScreen, goal: String, stepNumber: Int,
+                lastSafeInstruction: String?, repairFormat: Boolean): PlannerOutcome {
+                plannerCalls++
+                throw AssertionError("PIN entry must stop locally")
+            }
+        }
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { screen }, emit = emissions::add)
+        loop.startGoal("Продолжить")
+        loop.confirmGoal()
+        assertEquals(ScenarioPhase.PAUSED_FOR_AUTH, loop.session.phase)
+        assertEquals(0, plannerCalls)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance || it.effect is ScenarioEffect.SpeakText })
+        assertTrue(VoiceCaptureSafetyBoundary { ScreenSafetyGate.assess(screen) }.runIfAllowed {
+            throw AssertionError("Recorder and STT must not start")
+        } != null)
+    }
+
+    @Test
     fun `visible disabled authentication evidence stops before planner or speech`() {
         listOf("Password", "SMS code", "Enter PIN").forEach { label ->
             var plannerCalls = 0

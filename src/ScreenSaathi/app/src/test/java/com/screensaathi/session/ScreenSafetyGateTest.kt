@@ -191,6 +191,73 @@ class ScreenSafetyGateTest {
     }
 
     @Test
+    fun `PIN slots with generic digit buttons pause without editable nodes or keypad ids`() {
+        val slot = element("", "pin_slot", "View", editable = false)
+        for (resourceId in listOf("", "generic_button")) {
+            val digits = (0..9).map { digit ->
+                element(digit.toString(), resourceId, "Button", editable = false).copy(index = digit + 1)
+            }
+            val assessment = ScreenSafetyGate.assess(snapshot(slot, *digits.toTypedArray()))
+            assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+            assertEquals(AuthenticationEvidence.PIN_INPUT_CONTEXT, assessment.authenticationEvidence)
+            val describedDigits = digits.map { it.copy(contentDescription = it.text, text = "") }
+            assertEquals(ScreenDisposition.PAUSE_AUTH, ScreenSafetyGate.assess(
+                snapshot(slot, *describedDigits.toTypedArray()),
+            ).disposition)
+        }
+    }
+
+    @Test
+    fun `ordinary numeric controls need both PIN context and visible digit buttons`() {
+        val slot = element("", "pin_slot", "View", editable = false)
+        val digits = (0..9).map { element(it.toString(), "", "Button", editable = false) }
+        val address = element("", "address_input")
+        listOf(
+            listOf(address) + digits,
+            listOf(slot) + digits.take(3),
+            listOf(slot) + digits.map { it.copy(clickable = false) },
+            listOf(slot) + digits.map { it.copy(visibleToUser = false) },
+            listOf(slot) + digits.map { it.copy(bounds = Rect().apply { left = 200; right = 300; bottom = 100 }) },
+        ).forEach { nodes ->
+            assertEquals(ScreenDisposition.ALLOW, ScreenSafetyGate.assess(
+                snapshot(*nodes.toTypedArray()).copy(viewport = ScreenViewport(0, 0, 100, 100)),
+            ).disposition)
+        }
+    }
+
+    @Test
+    fun `location marker PIN label does not borrow authentication context from address input`() {
+        val address = element("", "address_input")
+        for (id in listOf("source_pin", "map_pin", "destination_pin")) {
+            val marker = element("PIN", id, "TextView", editable = false)
+            listOf(marker, marker.copy(text = "", contentDescription = "PIN"), marker.copy(text = "", hintText = "PIN")).forEach { node ->
+                assertEquals(id, ScreenDisposition.ALLOW, ScreenSafetyGate.assess(snapshot(address, node)).disposition)
+            }
+            assertEquals(ScreenDisposition.ALLOW, ScreenSafetyGate.assess(snapshot(
+                address, marker, *(0..9).map { element(it.toString(), "", "Button", editable = false) }.toTypedArray(),
+            )).disposition)
+        }
+    }
+
+    @Test
+    fun `location resource ids cannot override explicit authentication or editable PIN semantics`() {
+        val marker = element("PIN", "source_pin", "TextView", editable = false)
+        listOf(
+            marker.copy(text = "Enter PIN"),
+            marker.copy(text = "ПИН-код"),
+            marker.copy(password = true),
+            marker.copy(inputType = 0x12),
+            marker.copy(text = "OTP"),
+            marker.copy(editable = true),
+        ).forEach { node ->
+            assertEquals(ScreenDisposition.PAUSE_AUTH, ScreenSafetyGate.assess(snapshot(node)).disposition)
+        }
+        assertEquals(ScreenDisposition.PAUSE_AUTH, ScreenSafetyGate.assess(snapshot(
+            marker, element("", "pin_input"),
+        )).disposition)
+    }
+
+    @Test
     fun `diagnostics retain evidence and safe roles without external ids classes or values`() {
         val diagnostics = mutableListOf<ScreenSafetyDiagnostic>()
         val secret = "synthetic-private-value"
