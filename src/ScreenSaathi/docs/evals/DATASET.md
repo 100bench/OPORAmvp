@@ -138,6 +138,26 @@ planner events in the fresh process. The local FINAL_ACTION notice differs from
 the generic reducer handoff resource; both are valid exact static notices in the
 debug observer. No production rendering change was needed. No final order was tapped.
 
+Auto.ru 26.39.0 was subsequently navigated on the same Samsung to its blank
+Госномер form without reading or entering a plate, VIN, phone or credential.
+Four sanitized real captures preserve the safe stages: `sale_entry_real.json`
+(59 nodes), `sale_options_real.json` (28), `category_real.json` (22), and
+`plate_empty_real.json` (20). Production local replay selects the exact Продать
+ancestor 53, the Легковые category ancestor 12, and the Госномер editable field 3
+at `[45,433,742,613]`, avoiding the separate region field 5. Two exact Разместить
+объявление actions remain Ambiguous with no highlight; the topmost one was
+explicitly developer-selected for the reversible physical test. Disabled
+Продолжить ancestor 18 returns NotActionable with no highlight.
+
+No reviewed optional no-plate/manual/VIN route was exposed. Physical navigation
+stopped at the blank plate form; later VIN/forms/publication require user data or
+further semantic evidence. A live plate-guidance request was withheld because
+8 visible nonempty static labels and 3 external-ID fields could not be certified
+free of account/location/vehicle data without reading unknown source content.
+This is a strict preflight audit limit, not evidence that those strings contain
+PII. Deterministic authored-planner replay proves local resolution only; it does
+not establish live Auto.ru model guidance or a complete sale route.
+
 All external IDs/classes are opaque aliases, not production identifiers. Aliasing
 preserves within-fixture equality and distinctness but removes ID-based safety
 semantics: real replay alone cannot prove handling of `source_pin`/`pin_slot`.
@@ -147,8 +167,8 @@ The only exception is an explicitly approved static hint of a proven-empty
 editable; phone/email/OTP/long-number redaction still applies. Replay injects a
 synthetic current value and checks it never reaches the planner projection.
 
-Missing physical evidence remains explicit: fully autonomous Taxi result disambiguation, Auto.ru sell
-entry/plate/VIN/later form/final publication, popup close/manual-dismiss, auth and
+Missing physical evidence remains explicit: fully autonomous Taxi result disambiguation, live Auto.ru plate guidance and
+VIN/later form/final publication, popup close/manual-dismiss, auth and
 the originally observed bottom navigation duplicate at viewport boundary 2153/2157.
 The current real destination tree does not reproduce that boundary mismatch.
 Synthetic fixtures cover the missing routes, including final publish handoff

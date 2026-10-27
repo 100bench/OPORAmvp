@@ -15,6 +15,12 @@ internal object SemanticProbe {
     const val FINAL_ACTION_HANDOFF_TEXT = "Дальше возможно подтверждение заказа или оплаты. Проверьте всё и продолжите самостоятельно."
     val HANDOFF_TEXTS = setOf(HANDOFF_TEXT, FINAL_ACTION_HANDOFF_TEXT)
     private val vocabulary = mapOf(
+        "SELL_ENTRY" to listOf("продать", "продать автомобиль", "продать машину", "добавить объявление", "разместить объявление"),
+        "PLATE_FIELD" to listOf("госномер", "государственный номер", "номер автомобиля"),
+        "VIN_FIELD" to listOf("vin", "vin-код", "vin код"),
+        "SKIP_OPTION" to listOf("пропустить", "указать позже", "без госномера", "без номера", "добавить вручную", "заполнить вручную"),
+        "PHONE_FIELD" to listOf("номер телефона", "ваш телефон", "телефон"),
+        "SIGN_IN" to listOf("войти", "вход", "авторизация"),
         "PUBLIC_TEST_PLACE" to listOf("red square", "красная площадь", "парк победы", "park pobedy"),
         "DESTINATION_PROMPT" to listOf("куда поедем", "куда поедете", "куда едем", "куда", "where to"),
         "ORIGIN_PROMPT" to listOf("откуда", "откуда поедем", "откуда забрать"),

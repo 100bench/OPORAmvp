@@ -146,6 +146,26 @@ class SemanticProbeTest {
         assertFalse(evidence.toString().contains("подтверждение"))
     }
 
+    @Test fun `generic sale plate vin and skip semantics never include filled vehicle or phone values`() {
+        val output = SemanticProbe.encode(screen(
+            element(0, "Продать").copy(clickable = true),
+            element(1, "Добавить объявление").copy(clickable = true),
+            element(2, "Госномер"),
+            element(3, "VIN"),
+            element(4, "Без госномера").copy(clickable = true),
+            element(5, "Номер телефона"),
+            element(6, "private-vehicle-value").copy(editable = true, hintText = "VIN"),
+            element(7, "private-phone-value").copy(editable = true, hintText = "Номер телефона")))
+        val matches = JSONObject(output).getJSONArray("matches")
+        val semantics = (0 until matches.length()).map {
+            matches.getJSONObject(it).getInt("index") to matches.getJSONObject(it).getString("token")
+        }
+        assertTrue(semantics.containsAll(listOf(0 to "SELL_ENTRY", 1 to "SELL_ENTRY", 2 to "PLATE_FIELD",
+            3 to "VIN_FIELD", 4 to "SKIP_OPTION", 5 to "PHONE_FIELD")))
+        assertTrue(semantics.none { it.first in listOf(6, 7) })
+        assertFalse(output.contains("private"))
+    }
+
     private fun element(index: Int, text: String) = ScreenElement(index, "private-id", text, "private-class",
         Rect().apply { left = 10; top = 20; right = 110; bottom = 120 }, false, false)
     private fun screen(vararg elements: ScreenElement) = ScreenSnapshot("private.package", true, elements.toList(),

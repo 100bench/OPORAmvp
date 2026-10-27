@@ -79,12 +79,13 @@ class RealUiTreeRegressionTest(private val name: String, private val case: JSONO
                     loop.session.phase == ScenarioPhase.PAUSED_FOR_AUTH
                 "target_not_found" -> it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.NOT_FOUND)
                 "target_ambiguous" -> it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.AMBIGUOUS)
+                "target_not_actionable" -> it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.NOT_ACTIONABLE)
                 else -> false
             }
         })
         val viewport = snapshot.viewportOrLegacy
         renderedTargets.forEach {
-            assertEquals(case.optString("expected_target_resource_id", targetId), it.resourceId)
+            assertEquals(case.optString("expected_target_resource_id", targetId).takeIf(String::isNotBlank), it.resourceId)
             val expectedBounds = snapshot.elements.single { node -> node.index == case.getInt("target_index") }.bounds
             assertEquals(listOf(expectedBounds.left, expectedBounds.top, expectedBounds.right, expectedBounds.bottom),
                 listOf(it.left, it.top, it.right, it.bottom))
