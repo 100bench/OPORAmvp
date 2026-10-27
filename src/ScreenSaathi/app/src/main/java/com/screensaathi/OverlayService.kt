@@ -32,10 +32,13 @@ import com.screensaathi.overlay.DecisionButtons
 import com.screensaathi.overlay.DecisionChoice
 import com.screensaathi.overlay.HighlightView
 import com.screensaathi.overlay.OverlayCommand
+import com.screensaathi.overlay.OverlayLayoutKey
+import com.screensaathi.overlay.OverlayRenderPolicy
 import com.screensaathi.overlay.PillLabels
 import com.screensaathi.overlay.PillState
 import com.screensaathi.sarvam.Language
 import com.screensaathi.session.SessionController
+import com.screensaathi.session.ScenarioTelemetrySink
 
 /**
  * The overlay renderer. Owns two WindowManager windows:
@@ -50,6 +53,7 @@ class OverlayService : Service() {
 
     private lateinit var wm: WindowManager
     private val main = Handler(Looper.getMainLooper())
+    private val renderPolicy = OverlayRenderPolicy()
 
     private lateinit var highlightView: HighlightView
     private lateinit var pillRoot: View
@@ -124,12 +128,24 @@ class OverlayService : Service() {
         addPillWindow()
         controller = SessionController(
             applicationContext,
-            render = { cmd -> main.post { render(cmd) } },
+            render = { cmd ->
+                if (Looper.myLooper() == Looper.getMainLooper()) render(cmd)
+                else main.post { render(cmd) }
+            },
             // A screen-transition invalidation must never play the normal
             // fly-home clear — that would animate toward a target that is no
             // longer on screen. This bypasses render()/OverlayCommand and
             // drops the ring directly.
-            clearHighlightInstant = { main.post { highlightView.clearInstant() } },
+            clearHighlightInstant = {
+                if (Looper.myLooper() == Looper.getMainLooper()) highlightView.clearInstant()
+                else main.post { highlightView.clearInstant() }
+            },
+            telemetrySink = ScenarioTelemetrySink { event ->
+                if (BuildConfig.DEBUG && event.stage != null) {
+                    android.util.Log.d("ScenarioLatency", "stage=${event.stage} durationMs=${event.durationMs} " +
+                        "attempt=${event.attempt} outcome=${event.outcome}")
+                }
+            },
         )
         controller.debugSink = SessionController.DebugSink { text -> main.post { updateDebug(text) } }
         render(OverlayCommand(PillState.IDLE, expanded = false))
@@ -380,7 +396,7 @@ class OverlayService : Service() {
         val (cx, cy) = com.screensaathi.overlay.AssistantPlacement.clamp(x, y, w, h, safe)
         lp.x = cx
         lp.y = cy
-        runCatching { wm.updateViewLayout(pillRoot, lp) }
+        runCatching { updatePillLayout(lp) }
         if (BuildConfig.DEBUG) {
             android.util.Log.d(
                 TAG_UI,
@@ -738,6 +754,13 @@ class OverlayService : Service() {
         }
     }
 
+    /** Only WindowManager work is deduplicated; drawing and animation keep running. */
+    private fun updatePillLayout(lp: WindowManager.LayoutParams) {
+        val key = OverlayLayoutKey(lp.x, lp.y, lp.width, lp.height, pillRoot.height,
+            lp.flags, lp.softInputMode, imeTop(), expanded, presentation.command.highlight)
+        renderPolicy.update(key) { wm.updateViewLayout(pillRoot, lp) }
+    }
+
     private fun moveCardAwayFrom(target: com.screensaathi.overlay.HighlightBounds) {
         if (presentation.removalPending) {
             highlightView.clear()
@@ -762,7 +785,7 @@ class OverlayService : Service() {
                 if (lp.x != placement.x || lp.y != placement.y) {
                     lp.x = placement.x
                     lp.y = placement.y
-                    wm.updateViewLayout(pillRoot, lp)
+                    updatePillLayout(lp)
                     avoidingHighlight = true
                 }
             }
@@ -805,7 +828,7 @@ class OverlayService : Service() {
         }
         lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
         lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-        wm.updateViewLayout(pillRoot, lp)
+        updatePillLayout(lp)
         textCommand.requestFocus()
         // Window focus changes asynchronously after FLAG_NOT_FOCUSABLE is
         // cleared. An immediate showSoftInput is ignored on Samsung and the
@@ -825,7 +848,7 @@ class OverlayService : Service() {
         textCommand.clearFocus()
         pillParams?.let { lp ->
             lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            wm.updateViewLayout(pillRoot, lp)
+            updatePillLayout(lp)
         }
     }
 
@@ -933,7 +956,7 @@ class OverlayService : Service() {
                 params.width = width
                 params.x = nextX
                 userX += delta
-                wm.updateViewLayout(pillRoot, params)
+                updatePillLayout(params)
             }
         }
         pillRoot.post {

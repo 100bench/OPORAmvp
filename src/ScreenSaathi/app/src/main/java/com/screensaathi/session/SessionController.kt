@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.screensaathi.circle.CircleContext
@@ -68,6 +69,7 @@ class SessionController(
     private val context: Context,
     private val render: (OverlayCommand) -> Unit,
     private val clearHighlightInstant: () -> Unit,
+    private val telemetrySink: ScenarioTelemetrySink = NoOpScenarioTelemetrySink,
 ) {
 
     init { instance = this }
@@ -77,6 +79,8 @@ class SessionController(
 
     private val worker = HandlerThread("saathi-session").apply { start() }
     private val bg = Handler(worker.looper)
+    private val main = Handler(Looper.getMainLooper())
+    @Volatile private var latencyTurn: Pair<Int, ScenarioLatencyTrace>? = null
 
     /**
      * Recorder start/stop run here and nowhere else, so they are serialized in
@@ -118,7 +122,14 @@ class SessionController(
             planner = planner,
             snapshotProvider = { ScreenReaderService.instance?.snapshot() ?: ScreenSnapshot.EMPTY },
             clock = SystemClock::elapsedRealtime,
-            emit = ::handleUniversalEmission,
+            emit = { emission ->
+                val turn = universalTurn
+                emission.dispatch(
+                    postToUi = { main.post(it) },
+                    isActive = { universalActive && isCurrent(turn) },
+                    consume = ::handleUniversalEmission,
+                )
+            },
             appLabelProvider = { packageName ->
                 val packageManager = context.packageManager
                 runCatching {
@@ -161,8 +172,16 @@ class SessionController(
     private fun isCurrent(turn: Int): Boolean = turnId.get() == turn
 
     /** Render only if [turn] is still the live one. */
-    private fun renderIfCurrent(turn: Int, cmd: OverlayCommand) {
-        if (isCurrent(turn)) render(cmd)
+    private fun renderIfCurrent(
+        turn: Int,
+        cmd: OverlayCommand,
+        stillCurrent: () -> Boolean = { true },
+    ) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            if (isCurrent(turn) && stillCurrent()) render(cmd)
+        } else {
+            main.post { if (isCurrent(turn) && stillCurrent()) render(cmd) }
+        }
     }
 
     /**
@@ -244,6 +263,7 @@ class SessionController(
     fun onTextSubmitted(text: String) {
         if (text.isBlank()) return
         val turn = newTurn()
+        latencyTurn = turn to ScenarioLatencyTrace(SystemClock::elapsedRealtime, telemetrySink)
         pendingResumeCapsule = null
         bg.post { resumeCapsules.delete() }
         stopUniversalForReplacement(turn)
@@ -336,6 +356,9 @@ class SessionController(
             }
             val targetPackage = pendingTargetAppPackage
             val retryPhase = universalLoop.session.phase
+            if (scenarioChoice == ScenarioChoice.START && targetPackage == null) {
+                latencyTurn?.takeIf { it.first == universalTurn }?.second?.guidanceConfirmed()
+            }
             stopped = false
             player.stop()
             clearScenarioDecisions()
@@ -523,7 +546,8 @@ class SessionController(
         val targetPackage = DeviceContextProvider.snapshot(context)
             .findUniquelyMentionedLaunchableApp(goal)
             ?.packageName
-        universalLoop.startGoal(goal, targetPackage = targetPackage, ambiguous = ambiguous)
+        universalLoop.startGoal(goal, targetPackage = targetPackage, ambiguous = ambiguous,
+            latency = latencyTurn?.takeIf { it.first == turn }?.second)
     }
 
     private fun handleUniversalEmission(emission: UniversalGuidanceEmission) {
@@ -710,7 +734,8 @@ class SessionController(
             }
 
             is ScenarioEffect.SpeakText -> speech.post {
-                speak(Spoken(effect.text, lastLanguage), turn)
+                // The corresponding visual effect has already run on main.
+                speak(Spoken(effect.text, lastLanguage), turn, emission.latency, emission::isCurrent)
             }
 
             is ScenarioEffect.ShowDecision -> showScenarioDecision(turn, effect)
@@ -1118,6 +1143,7 @@ class SessionController(
         val activeCapture = voiceCaptureState.beginStopping() ?: return
         val turn = activeCapture.turn
         val captureToken = activeCapture.token
+        latencyTurn = turn to ScenarioLatencyTrace(SystemClock::elapsedRealtime, telemetrySink)
 
         voiceSafetyBoundary.unsafeAssessment()?.let { assessment ->
             if (voiceCaptureState.invalidateIfOwned(captureToken) == null) return
@@ -1216,7 +1242,11 @@ class SessionController(
         }
 
         val t0 = SystemClock.uptimeMillis()
-        val sttResult = stt.transcribe(wav)
+        val trace = latencyTurn?.takeIf { it.first == turn }?.second
+        val sttResult = if (trace == null) stt.transcribe(wav) else trace.measure(
+            ScenarioLatencyStage.STT,
+            outcome = { if (it == null) ScenarioLatencyOutcome.FAILURE else ScenarioLatencyOutcome.SUCCESS },
+        ) { stt.transcribe(wav) }
         val sttMs = SystemClock.uptimeMillis() - t0
         wav.delete()
         voiceCaptureState.finishIfOwned(captureToken)
@@ -2408,8 +2438,13 @@ class SessionController(
     @Volatile private var lastUserClickAt: Long = 0L
 
     /** Runs on [speech]. Never on the thread that resolves the highlight. */
-    private fun speak(spoken: Spoken, turn: Int) {
-        if (!isCurrent(turn) || stopped) return
+    private fun speak(
+        spoken: Spoken,
+        turn: Int,
+        latency: ScenarioLatencyTrace? = null,
+        stillCurrent: () -> Boolean = { true },
+    ) {
+        if (!isCurrent(turn) || stopped || !stillCurrent()) return
         currentScreenSafetyAssessment()
             ?.takeUnless { it.disposition == ScreenDisposition.ALLOW }
             ?.let { assessment ->
@@ -2417,28 +2452,31 @@ class SessionController(
                 return
             }
         if (!Sarvam.isConfigured()) return
-        if (!isCurrent(turn) || stopped) return
+        if (!isCurrent(turn) || stopped || !stillCurrent()) return
+        latency?.ttsStarted()
         val bytes = tts.synthesize(spoken)
         if (bytes == null) {
-            if (universalActive && isCurrent(turn)) universalLoop.ttsFailed()
+            if (universalActive && isCurrent(turn) && stillCurrent()) universalLoop.ttsFailed()
             return
         }
-        if (!isCurrent(turn) || stopped) return
+        if (!isCurrent(turn) || stopped || !stillCurrent()) return
         // Carry currentHighlight through both renders — the ring must survive
         // the speaking state, not blink out while the instruction is read.
         player.play(
             bytes,
             onStart = {
+                if (!stillCurrent()) return@play
                 renderIfCurrent(turn, OverlayCommand(PillState.SPEAKING, expanded = true,
                     instruction = spoken.text, language = spoken.language,
                     highlight = currentHighlight, choices = currentChoices,
-                    decisionButtons = currentDecisionButtons))
+                    decisionButtons = currentDecisionButtons), stillCurrent)
             },
             onDone = {
+                if (!stillCurrent()) return@play
                 renderIfCurrent(turn, OverlayCommand(PillState.GUIDING, expanded = true,
                     instruction = spoken.text, language = spoken.language,
                     highlight = currentHighlight, choices = currentChoices,
-                    decisionButtons = currentDecisionButtons))
+                    decisionButtons = currentDecisionButtons), stillCurrent)
             },
         )
     }

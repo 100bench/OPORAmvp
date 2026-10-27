@@ -21,6 +21,106 @@ import org.junit.Test
 class UniversalGuidanceLoopTest {
 
     @Test
+    fun `same generation screen change invalidates queued guidance and speech delivery`() {
+        val current = AtomicReference(screen("app", "target", "Куда", 10))
+        val queued = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(RepeatingPlanner(guide("Нажмите поле", resourceId = "target")),
+            current::get, clock(), queued::add)
+        loop.startGoal("Найти поле")
+        loop.confirmGoal()
+        val oldGuidance = queued.single { it.effect is ScenarioEffect.ShowGuidance }
+        val oldSpeech = queued.single { it.effect is ScenarioEffect.SpeakText }
+        assertTrue(oldSpeech.isCurrent())
+        current.set(screen("app", "target", "Другое", 100))
+        loop.observeScreen(current.get())
+        var rendered = false
+        oldGuidance.deliverIfCurrent { rendered = true }
+        assertFalse(rendered)
+        assertFalse(oldSpeech.isCurrent())
+    }
+
+    @Test
+    fun `local modal guidance measures resolution without a planner stage`() {
+        val events = mutableListOf<ScenarioTelemetryEvent>()
+        val trace = ScenarioLatencyTrace(clock(), ScenarioTelemetrySink(events::add))
+        val close = element(0, "close_button", "Закрыть", 900).copy(inDialog = true)
+        val dialog = ScreenSnapshot("example.popup", true, listOf(close), activeDialog = true)
+        val loop = UniversalGuidanceLoop(RepeatingPlanner(answer("unused")), { dialog }, clock(),
+            { emission -> emission.deliverIfCurrent { } })
+        loop.startGoal("Найти товары", latency = trace)
+        assertEquals(listOf(ScenarioLatencyStage.SNAPSHOT, ScenarioLatencyStage.SAFETY,
+            ScenarioLatencyStage.TARGET_RESOLUTION, ScenarioLatencyStage.FIRST_USEFUL_RENDER),
+            events.map { it.stage })
+    }
+
+    @Test
+    fun `stop cleanup remains synchronous while visual and speech effects use the UI queue`() {
+        val uiQueue = mutableListOf<() -> Unit>()
+        val delivered = mutableListOf<ScenarioEffect>()
+        val loop = UniversalGuidanceLoop(RepeatingPlanner(answer("Ответ")),
+            { screen("app", "target", "Куда", 10) }, clock(), { emission ->
+                emission.dispatch(uiQueue::add) { delivered += it.effect }
+            })
+        loop.startGoal("Вопрос")
+        assertTrue(delivered.none { it is ScenarioEffect.ShowAnswer || it is ScenarioEffect.SpeakText })
+        loop.stop()
+        assertTrue(delivered.contains(ScenarioEffect.CancelPendingWork))
+        assertTrue(delivered.contains(ScenarioEffect.StopNetworkMonitoring))
+        assertTrue(delivered.contains(ScenarioEffect.DeleteResumeCapsule))
+        uiQueue.forEach { it() }
+        assertTrue(delivered.none { it is ScenarioEffect.ShowAnswer || it is ScenarioEffect.SpeakText })
+    }
+
+    @Test
+    fun `queued guidance cannot render after stop even when emission already left the loop`() {
+        val queued = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(RepeatingPlanner(guide("Нажмите поле", resourceId = "target")),
+            { screen("app", "target", "Куда", 10) }, clock(), queued::add)
+        loop.startGoal("Найти поле")
+        loop.confirmGoal()
+        assertTrue(queued.any { it.effect is ScenarioEffect.ShowGuidance })
+        loop.stop()
+        val delivered = mutableListOf<ScenarioEffect>()
+        queued.forEach { emission -> emission.deliverIfCurrent { delivered += emission.effect } }
+        assertTrue(delivered.none { it is ScenarioEffect.ShowGuidance || it is ScenarioEffect.SpeakText })
+        assertTrue(delivered.contains(ScenarioEffect.ShowIdle))
+    }
+
+    @Test
+    fun `planner stages count format repair and useful render precedes queued speech`() {
+        var now = 10L
+        val events = mutableListOf<ScenarioTelemetryEvent>()
+        val trace = ScenarioLatencyTrace({ now++ }, ScenarioTelemetrySink(events::add))
+        var calls = 0
+        val planner = object : GuidancePlanner {
+            override fun planNext(screen: PlannerScreen, goal: String, stepNumber: Int,
+                lastSafeInstruction: String?, repairFormat: Boolean): PlannerOutcome {
+                calls++
+                return if (calls == 1) PlannerOutcome.Failure(PlannerFailureKind.INVALID_RESPONSE, "bad schema")
+                    else answer("Ответ")
+            }
+        }
+        val queued = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner,
+            { screen("app", "target", "Куда", 10) }, { now++ }, queued::add)
+        loop.startGoal("Вопрос", latency = trace)
+        assertTrue(events.none { it.stage == ScenarioLatencyStage.FIRST_USEFUL_RENDER })
+        queued.forEach { emission -> emission.deliverIfCurrent {
+            when (emission.effect) {
+                is ScenarioEffect.ShowAnswer -> assertTrue(events.none {
+                    it.stage == ScenarioLatencyStage.FIRST_USEFUL_RENDER
+                }) // The milestone must follow the actual render callback.
+                is ScenarioEffect.SpeakText -> emission.latency?.ttsStarted()
+                else -> Unit
+            }
+        } }
+        assertEquals(listOf(1, 2), events.filter { it.stage == ScenarioLatencyStage.PLANNER }.map { it.attempt })
+        assertEquals(listOf(ScenarioLatencyStage.FIRST_USEFUL_RENDER, ScenarioLatencyStage.TTS_START),
+            events.takeLast(2).map { it.stage })
+        assertTrue(events.all { it.durationMs!! >= 0 })
+    }
+
+    @Test
     fun `viewport shrink clears a rendered target and rejects a cached target without label changes`() {
         listOf(false, true).forEach { alreadyGuiding ->
             val raw = ScreenSnapshot("example.app", true, listOf(
