@@ -82,6 +82,70 @@ class SemanticProbeTest {
         assertFalse(output.contains("Красная"))
     }
 
+    @Test fun `park public query matches static Russian and English results without editable values or address leakage`() {
+        for (label in listOf("Парк Победы", "Park Pobedy", "парк победы, private result address")) {
+            val output = SemanticProbe.encode(screen(element(0, label).copy(clickable = true),
+                element(1, label).copy(editable = true, contentDescription = label, hintText = label)))
+            val matches = JSONObject(output).getJSONArray("matches")
+            assertEquals(label.take(4), 1, matches.length())
+            assertEquals("PUBLIC_TEST_PLACE", matches.getJSONObject(0).getString("token"))
+            assertEquals(0, matches.getJSONObject(0).getInt("actionIndex"))
+            assertFalse(output.contains("private"))
+            assertFalse(output.contains("Парк"))
+            assertFalse(output.contains("Park"))
+        }
+    }
+
+    @Test fun `own exact handoff evidence survives blocked screen without target geometry`() {
+        val handoff = element(10, "Дальше требуется ваше личное подтверждение. Проверьте данные и продолжите самостоятельно.")
+            .copy(resourceId = "instruction_text")
+        val blocked = screen(element(0, "Заказать такси"))
+        val own = screen(handoff).copy(packageName = "com.screensaathi")
+        val result = JSONObject(SemanticProbe.encode(blocked, own))
+        assertEquals("SAFE_HANDOFF", result.getString("assistantState"))
+        assertEquals(0, result.getJSONArray("matches").length())
+        for (unsafe in listOf(own.copy(packageName = "other"),
+            screen(handoff.copy(resourceId = "other")).copy(packageName = "com.screensaathi"),
+            screen(handoff.copy(visibleToUser = false)).copy(packageName = "com.screensaathi"),
+            screen(handoff.copy(text = "private content")).copy(packageName = "com.screensaathi"))) {
+            assertEquals("NONE", JSONObject(SemanticProbe.encode(blocked, unsafe)).getString("assistantState"))
+        }
+    }
+
+    @Test fun `own handoff render evidence requires visible exact card and never serializes other text`() {
+        val visible = JSONObject(com.screensaathi.debug.OwnHandoffEvidence.encode(
+            com.screensaathi.session.ScenarioPhase.SAFE_HANDOFF,
+            "Дальше требуется ваше личное подтверждение. Проверьте данные и продолжите самостоятельно.", true))
+        assertEquals("SAFE_HANDOFF", visible.getString("phase"))
+        assertEquals("SAFE_HANDOFF", visible.getString("card"))
+        val hidden = JSONObject(com.screensaathi.debug.OwnHandoffEvidence.encode(
+            com.screensaathi.session.ScenarioPhase.SAFE_HANDOFF, "private instruction", false))
+        assertEquals("HIDDEN", hidden.getString("card"))
+        assertFalse(hidden.toString().contains("private"))
+        val other = JSONObject(com.screensaathi.debug.OwnHandoffEvidence.encode(
+            com.screensaathi.session.ScenarioPhase.ANALYZING_SCREEN, "private instruction", true))
+        assertEquals("OTHER", other.getString("card"))
+        assertEquals("ANALYZING_SCREEN", other.getString("phase"))
+        assertFalse(other.toString().contains("private"))
+    }
+
+    @Test fun `own checking message is diagnosed with fixed token only`() {
+        val checking = JSONObject(com.screensaathi.debug.OwnHandoffEvidence.encode(
+            com.screensaathi.session.ScenarioPhase.SAFE_HANDOFF, "Проверяю текущий экран…", true))
+        assertEquals("CHECKING_SCREEN", checking.getString("card"))
+        assertFalse(checking.toString().contains("Проверяю"))
+    }
+
+    @Test fun `known local final action notice is also a visible safe handoff`() {
+        val notice = "Дальше возможно подтверждение заказа или оплаты. Проверьте всё и продолжите самостоятельно."
+        val evidence = JSONObject(com.screensaathi.debug.OwnHandoffEvidence.encode(
+            com.screensaathi.session.ScenarioPhase.SAFE_HANDOFF, notice, true))
+        assertEquals("SAFE_HANDOFF", evidence.getString("card"))
+        val own = screen(element(10, notice).copy(resourceId = "instruction_text")).copy(packageName = "com.screensaathi")
+        assertEquals("SAFE_HANDOFF", JSONObject(SemanticProbe.encode(screen(element(0, "Заказать")), own)).getString("assistantState"))
+        assertFalse(evidence.toString().contains("подтверждение"))
+    }
+
     private fun element(index: Int, text: String) = ScreenElement(index, "private-id", text, "private-class",
         Rect().apply { left = 10; top = 20; right = 110; bottom = 120 }, false, false)
     private fun screen(vararg elements: ScreenElement) = ScreenSnapshot("private.package", true, elements.toList(),

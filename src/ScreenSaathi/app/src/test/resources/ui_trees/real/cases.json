@@ -38,6 +38,30 @@
     "max_planner_calls": 1
   },
   {
+    "file": "yandex_go/taxi_park_results_ambiguous.json",
+    "capture_kind": "sanitized_real",
+    "disposition": "ALLOW",
+    "resolver": "Ambiguous",
+    "target_resource_id": "",
+    "target_text": "Парк Победы",
+    "target_index": -1,
+    "phase": "FAILED",
+    "recovery": "target_ambiguous",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "yandex_go/taxi_park_final_redacted.json",
+    "capture_kind": "sanitized_real",
+    "disposition": "ALLOW",
+    "resolver": "NotFound",
+    "target_resource_id": "",
+    "target_text": "Заказать",
+    "target_index": -1,
+    "phase": "FAILED",
+    "recovery": "target_not_found",
+    "max_planner_calls": 1
+  },
+  {
     "file": "yandex_go/destination_empty_keyboard.json",
     "capture_kind": "sanitized_real",
     "disposition": "ALLOW",

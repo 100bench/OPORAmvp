@@ -120,6 +120,24 @@ the earlier structural-only Taxi-entry evidence gap. It does not establish a
 complete physical Taxi route: public test input `Red Square` was entered later,
 while result selection and final-order handoff still require separate evidence.
 
+The subsequent public `Парк Победы` results capture is
+`taxi_park_results_ambiguous.json` (112 nodes). Four actionable phrase groups
+include two exact public-place titles with different actionable ancestors. The
+production resolver and local loop honestly return Ambiguous/FAILED with no
+highlight. The topmost exact result was explicitly developer-selected as a
+reversible test choice, rather than presented as unique model resolution.
+
+`taxi_park_final_redacted.json` (57 nodes) captures the following physical screen.
+Raw local safety reports FINAL_ACTION/SAFE_HANDOFF, but exact-label export retains
+only `Назад` even with reviewed generic final-action labels and case variants.
+The privacy-redacted replay therefore honestly reports ALLOW/NotFound; it cannot
+prove final-action safety after the raw evidence has been removed. No synthetic
+risk label was inserted. A subsequent actual Opora text session on the unchanged screen confirmed
+ScenarioPhase SAFE_HANDOFF and an actually visible own handoff notice, with zero
+planner events in the fresh process. The local FINAL_ACTION notice differs from
+the generic reducer handoff resource; both are valid exact static notices in the
+debug observer. No production rendering change was needed. No final order was tapped.
+
 All external IDs/classes are opaque aliases, not production identifiers. Aliasing
 preserves within-fixture equality and distinctness but removes ID-based safety
 semantics: real replay alone cannot prove handling of `source_pin`/`pin_slot`.
@@ -129,7 +147,7 @@ The only exception is an explicitly approved static hint of a proven-empty
 editable; phone/email/OTP/long-number redaction still applies. Replay injects a
 synthetic current value and checks it never reaches the planner projection.
 
-Missing physical evidence remains explicit: taxi final-order, Auto.ru sell
+Missing physical evidence remains explicit: fully autonomous Taxi result disambiguation, Auto.ru sell
 entry/plate/VIN/later form/final publication, popup close/manual-dismiss, auth and
 the originally observed bottom navigation duplicate at viewport boundary 2153/2157.
 The current real destination tree does not reproduce that boundary mismatch.

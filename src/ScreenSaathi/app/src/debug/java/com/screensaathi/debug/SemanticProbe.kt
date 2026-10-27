@@ -11,8 +11,11 @@ import java.util.Locale
 
 /** Debug-only fixed-vocabulary projection; never retains source labels or identifiers. */
 internal object SemanticProbe {
+    const val HANDOFF_TEXT = "Дальше требуется ваше личное подтверждение. Проверьте данные и продолжите самостоятельно."
+    const val FINAL_ACTION_HANDOFF_TEXT = "Дальше возможно подтверждение заказа или оплаты. Проверьте всё и продолжите самостоятельно."
+    val HANDOFF_TEXTS = setOf(HANDOFF_TEXT, FINAL_ACTION_HANDOFF_TEXT)
     private val vocabulary = mapOf(
-        "PUBLIC_TEST_PLACE" to listOf("red square", "красная площадь"),
+        "PUBLIC_TEST_PLACE" to listOf("red square", "красная площадь", "парк победы", "park pobedy"),
         "DESTINATION_PROMPT" to listOf("куда поедем", "куда поедете", "куда едем", "куда", "where to"),
         "ORIGIN_PROMPT" to listOf("откуда", "откуда поедем", "откуда забрать"),
         "TAXI" to listOf("такси", "taxi"),
@@ -69,7 +72,11 @@ internal object SemanticProbe {
                     .put("right", it.bounds.right).put("bottom", it.bounds.bottom))
             }
         }
-        return JSONObject().put("elements", snapshot.elements.size).put("settled", snapshot.settled)
+        val assistantHandoff = assistant?.packageName == "com.screensaathi" && assistant.elements.any {
+            it.resourceId == "instruction_text" && it.text in HANDOFF_TEXTS && !it.editable &&
+                it.eligibility(assistant.viewportOrLegacy) == ScreenElementEligibility.Eligible
+        }
+        return JSONObject().put("assistantState", if (assistantHandoff) "SAFE_HANDOFF" else "NONE").put("elements", snapshot.elements.size).put("settled", snapshot.settled)
             .put("disposition", safety.disposition.name).put("risk", safety.category.name)
             .put("matches", matches).toString()
     }

@@ -392,9 +392,15 @@ Its JSON contains fixed token IDs, exact/phrase status, numeric indices/bounds,
 flags and a local safety category. It never emits raw labels, IDs, classes,
 packages or editable values; only proven-empty editable hints can match. The
 vocabulary includes the explicitly authorized public test place Red Square /
-Красная площадь; surrounding address text never survives. Local auth/payment/
+Красная площадь and Park Pobedy / Парк Победы; surrounding address text never survives. Local auth/payment/
 final-action classification suppresses all target geometry. The exact known
 own-overlay `Начать` button can emit `ASSISTANT_START` only with the own package,
-expected view ID, exact static text and eligible bounds. No action is performed
+expected view ID, exact static text and eligible bounds. The fixed `ownPresentation` phase/card fields observe only Opora's own scenario
+enum and known instruction TextView and presentation model in process, without serializing
+source text. Both the generic reducer notice and the local FINAL_ACTION notice
+are matched only as exact known static messages. They distinguish a visible
+handoff card from missing accessibility text;
+`UNAVAILABLE` reports a failed observation. `assistantState` remains the separate
+accessibility-only indicator. Own controls use their own window viewport. No action is performed
 by the probe. This debug utility does not authorize coordinate guessing, personal
 input or final order confirmation, and is absent from release builds.
