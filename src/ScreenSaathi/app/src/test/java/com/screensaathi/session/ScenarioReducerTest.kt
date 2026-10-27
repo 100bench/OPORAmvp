@@ -9,6 +9,26 @@ import org.junit.Test
 class ScenarioReducerTest {
 
     @Test
+    fun `only invisible target enters scroll recovery and all issues clear guidance`() {
+        ScenarioTargetIssue.entries.forEach { issue ->
+            val session = ScenarioSession.idle(0).copy(phase = ScenarioPhase.ANALYZING_SCREEN)
+            val result = reduce(session, ScenarioEvent.TargetUnavailable(issue), 10)
+            assertTrue(result.effects.contains(ScenarioEffect.ClearHighlight))
+            assertTrue(result.effects.contains(ScenarioEffect.ShowTargetIssue(issue)))
+            assertEquals(issue == ScenarioTargetIssue.NOT_VISIBLE,
+                result.session.phase == ScenarioPhase.WAITING_FOR_MANUAL_SCROLL)
+            assertTrue(result.effects.none { it is ScenarioEffect.ShowGuidance })
+            assertNull(result.session.currentGuidance)
+            if (issue != ScenarioTargetIssue.NOT_VISIBLE) {
+                assertEquals(ScenarioPhase.ANALYZING_SCREEN,
+                    reduce(result.session, ScenarioEvent.RetryRequested, 20).session.phase)
+                assertEquals(ScenarioPhase.RECOGNIZING_GOAL,
+                    reduce(result.session, ScenarioEvent.RephraseRequested, 20).session.phase)
+            }
+        }
+    }
+
+    @Test
     fun `idle starts recognition and ambiguous STT offers correct-or-repeat`() {
         val recognizing = reduce(ScenarioSession.idle(0), ScenarioEvent.StartRequested, 10)
 

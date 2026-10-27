@@ -29,6 +29,7 @@ object ScenarioReducer {
             ScenarioEvent.PhysicalTapTimedOut -> physicalTapTimedOut(session, nowMs)
             is ScenarioEvent.CachedGuideInvalidated -> cachedGuideInvalidated(session, event, nowMs)
             ScenarioEvent.TargetNotFound -> targetNotFound(session, nowMs)
+            is ScenarioEvent.TargetUnavailable -> targetUnavailable(session, event.issue, nowMs)
             is ScenarioEvent.ModalCloseAvailable -> modalCloseAvailable(session, event, nowMs)
             ScenarioEvent.ManualDismissRequired -> manualDismissRequired(session, nowMs)
             ScenarioEvent.AuthenticationRequired -> authenticationRequired(session, nowMs)
@@ -432,6 +433,24 @@ object ScenarioReducer {
                 updatedAtMs = nowMs,
             ),
             listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.RequestManualScroll),
+        )
+    }
+
+    private fun targetUnavailable(
+        session: ScenarioSession,
+        issue: ScenarioTargetIssue,
+        nowMs: Long,
+    ): ScenarioTransition {
+        if (session.phase != ScenarioPhase.ANALYZING_SCREEN) return unchanged(session)
+        if (issue == ScenarioTargetIssue.NOT_VISIBLE) {
+            val transition = targetNotFound(session, nowMs)
+            return transition.copy(effects = transition.effects.map {
+                if (it == ScenarioEffect.RequestManualScroll) ScenarioEffect.ShowTargetIssue(issue) else it
+            })
+        }
+        return ScenarioTransition(
+            session.copy(phase = ScenarioPhase.FAILED, currentGuidance = null, updatedAtMs = nowMs),
+            listOf(ScenarioEffect.ClearHighlight, ScenarioEffect.ShowTargetIssue(issue)),
         )
     }
 

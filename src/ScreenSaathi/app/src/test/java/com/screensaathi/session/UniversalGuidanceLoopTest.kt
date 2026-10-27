@@ -21,6 +21,94 @@ import org.junit.Test
 class UniversalGuidanceLoopTest {
 
     @Test
+    fun `viewport shrink clears a rendered target and rejects a cached target without label changes`() {
+        listOf(false, true).forEach { alreadyGuiding ->
+            val raw = ScreenSnapshot("example.app", true, listOf(
+                element(0, "target", "Куда", 10).copy(bounds = testRect(10, 100, 200, 180)),
+                element(1, "other", "Другое", 300),
+            ), viewport = com.screensaathi.screen.ScreenViewport(0, 0, 1080, 200))
+            val current = AtomicReference(raw)
+            val emissions = mutableListOf<UniversalGuidanceEmission>()
+            val loop = UniversalGuidanceLoop(RepeatingPlanner(guide("Нажмите поле", resourceId = "target")),
+                { current.get() }, clock(), emissions::add)
+            loop.startGoal("Найти поле")
+            if (alreadyGuiding) loop.confirmGoal()
+            emissions.clear()
+            current.set(raw.copy(viewport = com.screensaathi.screen.ScreenViewport(0, 0, 1080, 100)))
+            if (alreadyGuiding) loop.observeScreen(current.get()) else loop.confirmGoal()
+            assertTrue(emissions.any { it.effect == ScenarioEffect.ClearHighlight })
+            assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance || it.resolvedTarget != null })
+            assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        }
+    }
+
+    @Test
+    fun `viewport changing during planning discards old geometry with bounded replan`() {
+        val raw = ScreenSnapshot("example.app", true, listOf(
+            element(0, "target", "Куда", 10).copy(bounds = testRect(10, 100, 200, 180)),
+            element(1, "other", "Другое", 300),
+        ), viewport = com.screensaathi.screen.ScreenViewport(0, 0, 1080, 200))
+        val current = AtomicReference(raw)
+        var calls = 0
+        val planner = object : GuidancePlanner {
+            override fun planNext(screen: PlannerScreen, goal: String, stepNumber: Int,
+                lastSafeInstruction: String?, repairFormat: Boolean): PlannerOutcome {
+                calls++
+                current.set(raw.copy(viewport = com.screensaathi.screen.ScreenViewport(0, 0, 1080, 100)))
+                return guide("Нажмите поле", resourceId = "target")
+            }
+        }
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { current.get() }, clock(), emissions::add)
+        loop.startGoal("Найти поле")
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ConfirmGoal || it.resolvedTarget != null })
+        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertEquals(3, calls) // one stale response, one current plan, one legacy repair
+    }
+
+    @Test
+    fun `disabled exact planner label cannot fall back to another loosely matched control`() {
+        val raw = ScreenSnapshot("example.app", true, listOf(
+            element(0, "", "Поиск", 10).copy(enabled = false),
+            element(1, "", "Поиск настроек", 200),
+        ))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(RepeatingPlanner(guide("Нажмите поиск", targetText = "Поиск")),
+            { raw }, clock(), emissions::add)
+        loop.startGoal("Найти поле")
+        assertTrue(emissions.any { it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.NOT_ACTIONABLE) })
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ConfirmGoal || it.resolvedTarget != null })
+    }
+
+    @Test
+    fun `id and text misses distinguish unavailable controls without emitting geometry`() {
+        val base = element(0, "destination", "Куда", 10)
+        val cases = listOf(
+            listOf(base.copy(bounds = testRect(10, 2157, 400, 2290))) to "NOT_VISIBLE",
+            listOf(base.copy(enabled = false)) to "NOT_ACTIONABLE",
+            listOf(base.copy(clickable = false)) to "NOT_ACTIONABLE",
+            listOf(base, base.copy(index = 1, bounds = testRect(200, 20, 300, 80))) to "AMBIGUOUS",
+            emptyList<ScreenElement>() to "NOT_FOUND",
+        )
+        cases.forEach { (nodes, issue) ->
+            listOf(guide("Нажмите поле.", resourceId = "destination"),
+                guide("Нажмите поле.", targetText = "Куда")).forEach { plan ->
+                val raw = ScreenSnapshot("example.app", true,
+                    nodes + element(9, "other", "Другое", 500),
+                    viewport = com.screensaathi.screen.ScreenViewport(0, 0, 1080, 2153))
+                val emissions = mutableListOf<UniversalGuidanceEmission>()
+                val loop = UniversalGuidanceLoop(RepeatingPlanner(plan), { raw }, clock(), emissions::add)
+                loop.startGoal("Найти поле")
+                assertTrue("Missing typed $issue", emissions.any {
+                    it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.valueOf(issue))
+                })
+                assertTrue(emissions.none { it.resolvedTarget != null || it.effect is ScenarioEffect.ShowGuidance })
+                assertEquals(issue == "NOT_VISIBLE", loop.session.phase == ScenarioPhase.WAITING_FOR_MANUAL_SCROLL)
+            }
+        }
+    }
+
+    @Test
     fun `visible guidance is invalidated only by a different readable fingerprint`() {
         assertFalse(shouldClearGuidanceHighlight("screen-1", "screen-1"))
         assertFalse(shouldClearGuidanceHighlight("screen-1", ""))
@@ -337,8 +425,8 @@ class UniversalGuidanceLoopTest {
         loop.startGoal("Продолжить")
 
         assertEquals(2, planner.calls)
-        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
-        assertTrue(emissions.any { it.effect is ScenarioEffect.RequestManualScroll })
+        assertEquals(ScenarioPhase.FAILED, loop.session.phase)
+        assertTrue(emissions.any { it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.NOT_FOUND) })
         assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
     }
 
@@ -355,7 +443,7 @@ class UniversalGuidanceLoopTest {
         loop.startGoal("Указать госномер")
 
         assertEquals(2, planner.calls)
-        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertEquals(ScenarioPhase.FAILED, loop.session.phase)
         assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
     }
 
@@ -371,7 +459,7 @@ class UniversalGuidanceLoopTest {
         loop.startGoal("Продолжить")
 
         assertEquals(2, planner.calls)
-        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertEquals(ScenarioPhase.FAILED, loop.session.phase)
         assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
     }
 
@@ -387,7 +475,7 @@ class UniversalGuidanceLoopTest {
         loop.startGoal("Продолжить")
 
         assertEquals(2, planner.calls)
-        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertEquals(ScenarioPhase.FAILED, loop.session.phase)
         assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
     }
 
@@ -577,21 +665,25 @@ class UniversalGuidanceLoopTest {
     }
 
     @Test
-    fun `unresolved target asks for manual scroll and only changed fingerprints count`() {
-        val current = AtomicReference(screen("screen-1", "other", "Другое", 10))
+    fun `offscreen target asks for manual scroll and only changed fingerprints count`() {
+        fun offscreen(suffix: String) = ScreenSnapshot("example.$suffix", true, listOf(
+            element(0, "missing", "Искомое", 10).copy(bounds = testRect(10, 2157, 400, 2290)),
+            element(1, "other", "Другое", 500),
+        ), viewport = com.screensaathi.screen.ScreenViewport(0, 0, 1080, 2153))
+        val current = AtomicReference(offscreen("screen-1"))
         val planner = RepeatingPlanner(guide("Нажмите «Искомое».", resourceId = "missing"))
         val emissions = mutableListOf<UniversalGuidanceEmission>()
         val loop = UniversalGuidanceLoop(planner, { current.get() }, clock(), emissions::add)
 
         loop.startGoal("Найти искомое")
         assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
-        assertTrue(emissions.any { it.effect is ScenarioEffect.RequestManualScroll })
+        assertTrue(emissions.any { it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.NOT_VISIBLE) })
 
         loop.observeScreen(current.get())
         assertEquals(0, loop.session.scrollAttempts)
 
         repeat(3) { index ->
-            val next = screen("screen-${index + 2}", "other-${index + 2}", "Другое", 20 + index)
+            val next = offscreen("screen-${index + 2}")
             current.set(next)
             loop.observeScreen(next)
         }

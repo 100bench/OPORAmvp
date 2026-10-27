@@ -10,13 +10,64 @@ import org.junit.Test
 class TargetResolverTest {
 
     @Test
+    fun `Samsung bottom node outside app viewport is never a target`() {
+        val node = element(0, "Куда", testRect(45, 2157, 1035, 2290))
+        val result = TargetResolver.resolve("Куда", ScreenSnapshot("example.app", true,
+            listOf(node), viewport = ScreenViewport(0, 63, 1080, 2153)))
+        assertEquals("NotVisible", result.javaClass.simpleName)
+    }
+
+    @Test
+    fun `clipped and hidden matches are not visible while disabled and password matches are not actionable`() {
+        val node = element(0, "Куда", testRect(10, 10, 110, 80))
+        listOf(
+            node.copy(bounds = testRect(10, 190, 110, 280)) to "NotVisible",
+            node.copy(visibleToUser = false) to "NotVisible",
+            node.copy(enabled = false) to "NotActionable",
+            node.copy(password = true) to "NotActionable",
+            node.copy(clickable = false) to "NotActionable",
+        ).forEach { (candidate, expected) ->
+            assertEquals(expected, TargetResolver.resolve("Куда", ScreenSnapshot("example.app", true,
+                listOf(candidate), viewport = ScreenViewport(0, 0, 200, 200))).javaClass.simpleName)
+        }
+    }
+
+    @Test
+    fun `VIN label normalizes to its clickable ancestor before ranking`() {
+        val input = element(0, "", testRect(10, 10, 400, 200)).copy(editable = true)
+        val label = element(1, "VIN", testRect(20, 20, 100, 60))
+            .copy(clickable = false, clickableAncestorIndex = 0)
+        val result = TargetResolver.resolve("VIN", ScreenSnapshot("example.app", true, listOf(input, label)))
+        assertSame(input, (result as TargetResolver.Result.Found).candidate.element)
+    }
+
+    @Test
+    fun `two separated labels sharing a clickable ancestor are one control`() {
+        val button = element(0, "", testRect(10, 10, 400, 200))
+        val label = element(1, "Выбрать", testRect(20, 20, 100, 60))
+            .copy(clickable = false, clickableAncestorIndex = 0)
+        val other = label.copy(index = 2, bounds = testRect(200, 20, 300, 60))
+        val result = TargetResolver.resolve("Выбрать", ScreenSnapshot("example.app", true,
+            listOf(button, label, other)))
+        assertSame(button, (result as TargetResolver.Result.Found).candidate.element)
+    }
+
+    @Test
+    fun `equal labels on genuinely distinct buttons remain ambiguous`() {
+        val first = element(0, "Выбрать", testRect(10, 10, 200, 100))
+        val second = first.copy(index = 1, bounds = testRect(10, 150, 200, 250))
+        assertTrue(TargetResolver.resolve("Выбрать", ScreenSnapshot("example.app", true,
+            listOf(first, second))) is TargetResolver.Result.Ambiguous)
+    }
+
+    @Test
     fun `cyrillic labels do not all normalize to the same empty string`() {
         val snapshot = ScreenSnapshot(
             packageName = "ru.yandex.taxi",
             settled = true,
             elements = listOf(
-                element(0, "Еда", Rect(10, 10, 210, 110)),
-                element(1, "Такси", Rect(220, 10, 420, 110)),
+                element(0, "Еда", testRect(10, 10, 210, 110)),
+                element(1, "Такси", testRect(220, 10, 420, 110)),
             ),
         )
 
@@ -29,8 +80,8 @@ class TargetResolverTest {
             packageName = "ru.yandex.taxi",
             settled = true,
             elements = listOf(
-                element(0, "Лавка", Rect(10, 10, 210, 110)),
-                element(1, "Еда", Rect(220, 10, 420, 110)),
+                element(0, "Лавка", testRect(10, 10, 210, 110)),
+                element(1, "Еда", testRect(220, 10, 420, 110)),
             ),
         )
 
@@ -65,7 +116,7 @@ class TargetResolverTest {
 
     @Test
     fun `resolver keeps using raw local bounds after planner DTO split`() {
-        val localBounds = Rect(31, 47, 731, 247)
+        val localBounds = testRect(31, 47, 731, 247)
         val snapshot = ScreenSnapshot(
             packageName = "ru.example.app",
             settled = true,
@@ -145,7 +196,7 @@ class TargetResolverTest {
             ScreenSnapshot("example.app", true, listOf(plate, vin, input)),
         )
 
-        assertTrue(result is TargetResolver.Result.NotFound)
+        assertTrue(result is TargetResolver.Result.NotActionable)
     }
 
     @Test
@@ -166,12 +217,12 @@ class TargetResolverTest {
             ScreenSnapshot("example.app", true, listOf(vin, input, explanation)),
         )
 
-        assertTrue(result is TargetResolver.Result.NotFound)
+        assertTrue(result is TargetResolver.Result.NotActionable)
         assertTrue(
             TargetResolver.resolve(
                 explanation.text,
                 ScreenSnapshot("example.app", true, listOf(vin, input, explanation)),
-            ) is TargetResolver.Result.NotFound
+            ) is TargetResolver.Result.NotActionable
         )
     }
 
@@ -188,7 +239,7 @@ class TargetResolverTest {
             ScreenSnapshot("example.app", true, listOf(input, explanation)),
         )
 
-        assertTrue(result is TargetResolver.Result.NotFound)
+        assertTrue(result is TargetResolver.Result.NotActionable)
     }
 
     @Test
@@ -203,11 +254,11 @@ class TargetResolverTest {
             ScreenSnapshot("example.app", true, listOf(label, input)),
         )
 
-        assertTrue(result is TargetResolver.Result.NotFound)
+        assertTrue(result is TargetResolver.Result.NotActionable)
     }
 
     @Test
-    fun `plain text row remains targetable with unrelated search field above`() {
+    fun `plain text row cannot borrow an unrelated search field above`() {
         val row = element(0, "Такси", testRect(10, 100, 410, 170)).copy(clickable = false)
         val search = ScreenElement(
             1, "search", "", "EditText", testRect(10, 10, 410, 80), true, true,
@@ -218,8 +269,7 @@ class TargetResolverTest {
             ScreenSnapshot("example.app", true, listOf(row, search)),
         )
 
-        assertTrue(result is TargetResolver.Result.Found)
-        assertSame(row, (result as TargetResolver.Result.Found).candidate.element)
+        assertTrue(result is TargetResolver.Result.NotActionable)
     }
 
     private fun element(index: Int, text: String, bounds: Rect) = ScreenElement(

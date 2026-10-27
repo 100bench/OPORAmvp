@@ -443,10 +443,10 @@ class UniversalGuidanceLoop(
             return
         }
 
-        val target = resolve(plan, raw)
-        if (target == null) {
+        val result = resolve(plan, raw)
+        if (result !is TargetResolver.Result.Found) {
             if (repairFormat) {
-                dispatch(ScenarioEvent.TargetNotFound, token)
+                dispatch(ScenarioEvent.TargetUnavailable(result.toTargetIssue()), token)
             } else {
                 // The model may invent a plausible ID for a real, unlabelled
                 // control. Give it one chance to select an exact visible label
@@ -466,7 +466,15 @@ class UniversalGuidanceLoop(
             return
         }
 
-        synchronized(lock) { pendingTarget = target }
+        val bounds = result.candidate.bounds
+        synchronized(lock) {
+            pendingTarget = ResolvedScenarioTarget(
+                bounds.left, bounds.top, bounds.right, bounds.bottom,
+                raw.signature(), raw.localIdentity(),
+                result.candidate.element.resourceId.takeIf(String::isNotBlank),
+                plan.targetText.takeIf(String::isNotBlank),
+            )
+        }
         dispatch(
             ScenarioEvent.PlannerGuided(
                 ScenarioGuidance(plan.instruction, semanticTarget)
@@ -481,55 +489,42 @@ class UniversalGuidanceLoop(
             appLabel = appLabelProvider(snapshot.packageName),
         )
 
-    private fun resolve(plan: PlannerResult, raw: ScreenSnapshot): ResolvedScenarioTarget? {
-        // Resolve only inside the same visible, non-password subset that could
-        // have produced the provider-safe DTO. An invented id must never land
-        // on a hidden raw node merely because it exists locally.
-        val resolvable = raw.copy(
-            elements = raw.elements.filter { it.visibleToUser && !it.password },
-        )
-        val safeElements = ScreenSanitizer.sanitize(resolvable).elements
-        val actionableIds = safeElements.asSequence()
-            .filter { it.enabled && (it.editable || it.clickable) }
-            .mapNotNull { it.resourceId }
-            .toSet()
-        val bounds = plan.targetResourceId.takeIf { it in actionableIds }
-            ?.let(resolvable::boundsForResourceId)
-            ?: plan.targetText.takeIf(String::isNotBlank)?.let { text ->
-                // Planner text is a label copied from the supplied tree, not
-                // a natural-language search query. A prefix like "Госномер"
-                // must not point at "Госномер не указан" on a VIN form.
-                val exactVisibleLabel = safeElements.any { element ->
-                    listOfNotNull(element.label, element.description)
-                        .any { it.trim().equals(text.trim(), ignoreCase = true) }
-                }
-                if (!exactVisibleLabel) return@let null
-                // Never let a filled EditText value participate in matching.
-                // Only labels already present in the provider-safe DTO may
-                // stand in for text while the raw geometry stays local.
-                val labelsByIndex = safeElements.associateBy { it.index }
-                val grounded = resolvable.copy(elements = resolvable.elements.map { element ->
-                    val safe = labelsByIndex[element.index]
-                    val label = listOfNotNull(safe?.label, safe?.description)
-                        .firstOrNull { it.trim().equals(text.trim(), ignoreCase = true) }
-                        ?: safe?.label.orEmpty()
-                    element.copy(text = label, hintText = "", contentDescription = "")
-                })
-                (TargetResolver.resolve(text, grounded) as? TargetResolver.Result.Found)
-                    ?.candidate
-                    ?.bounds
-            }
-            ?: return null
-        return ResolvedScenarioTarget(
-            left = bounds.left,
-            top = bounds.top,
-            right = bounds.right,
-            bottom = bounds.bottom,
-            fingerprint = raw.signature(),
-            snapshotIdentity = raw.localIdentity(),
-            resourceId = plan.targetResourceId.takeIf(String::isNotBlank),
-            text = plan.targetText.takeIf(String::isNotBlank),
-        )
+    private fun resolve(plan: PlannerResult, raw: ScreenSnapshot): TargetResolver.Result {
+        val idResult = plan.targetResourceId.takeIf(String::isNotBlank)?.let {
+            TargetResolver.resolveResourceId(it, raw)
+        }
+        if (idResult != null && idResult !is TargetResolver.Result.NotFound) return idResult
+        val text = plan.targetText.takeIf(String::isNotBlank)
+            ?: return idResult ?: TargetResolver.Result.NotFound("")
+
+        // This projection is LOCAL ONLY: it retains safe labels on offscreen
+        // nodes to distinguish not-visible from absent. The real viewport and
+        // visibility flags are restored for resolution, never sent to the planner.
+        // Filled editable values are still excluded by the sanitizer.
+        val labelsByIndex = ScreenSanitizer.sanitize(raw.copy(
+            viewport = null,
+            elements = raw.elements.map { it.copy(visibleToUser = true) },
+        )).elements.associateBy { it.index }
+        if (labelsByIndex.values.none { safe ->
+                listOfNotNull(safe.label, safe.description)
+                    .any { it.trim().equals(text.trim(), ignoreCase = true) }
+            }) return TargetResolver.Result.NotFound(text)
+        val grounded = raw.copy(elements = raw.elements.map { element ->
+            val safe = labelsByIndex[element.index]
+            val label = listOfNotNull(safe?.label, safe?.description)
+                .firstOrNull { it.trim().equals(text.trim(), ignoreCase = true) }
+                ?: safe?.label.orEmpty()
+            element.copy(text = label, hintText = "", contentDescription = "")
+        })
+        return TargetResolver.resolveLabel(text, grounded)
+    }
+
+    private fun TargetResolver.Result.toTargetIssue(): ScenarioTargetIssue = when (this) {
+        is TargetResolver.Result.NotVisible -> ScenarioTargetIssue.NOT_VISIBLE
+        is TargetResolver.Result.Ambiguous -> ScenarioTargetIssue.AMBIGUOUS
+        is TargetResolver.Result.NotActionable -> ScenarioTargetIssue.NOT_ACTIONABLE
+        is TargetResolver.Result.NotFound -> ScenarioTargetIssue.NOT_FOUND
+        is TargetResolver.Result.Found -> error("Found target has no recovery issue")
     }
 
     private fun PlannerFailureKind.toScenarioFailure(): ScenarioPlanningFailure = when (this) {
@@ -550,6 +545,10 @@ class UniversalGuidanceLoop(
         add(packageName)
         add(settled)
         add(activeDialog)
+        add(viewportOrLegacy.left)
+        add(viewportOrLegacy.top)
+        add(viewportOrLegacy.right)
+        add(viewportOrLegacy.bottom)
         elements.forEach { element ->
             add(element.index)
             add(element.resourceId)

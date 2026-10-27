@@ -122,6 +122,9 @@ data class ScreenSnapshot(
             .take(6)
             .sorted()
             .joinToString("|")
-        return "$packageName#dialog=$activeDialog#$labels"
+        // A window/IME resize can hide a target without changing any labels.
+        // Include its safe viewport so the existing highlight invalidation
+        // clears the ring before waiting for the next settled observation.
+        return "$packageName#dialog=$activeDialog#viewport=$viewportOrLegacy#$labels"
     }
 }

@@ -46,7 +46,9 @@ object TargetResolver {
 
     sealed interface Result {
         data class Found(val candidate: Candidate) : Result
+        data class NotVisible(val query: String) : Result
         data class Ambiguous(val candidates: List<Candidate>) : Result
+        data class NotActionable(val query: String) : Result
         data class NotFound(val query: String) : Result
     }
 
@@ -54,42 +56,93 @@ object TargetResolver {
         val q = normalize(query)
         if (q.isEmpty()) return Result.NotFound(query)
 
-        val scored = snapshot.elements
+        return rank(query, snapshot, snapshot.elements
             .mapNotNull { score(q, it) }
-            .filter { it.score >= MIN_SCORE }
-            // Prefer something the user can actually act on, then the tighter
-            // of two equal matches — a label wrapping a button should lose to
-            // the button.
+            .filter { it.score >= MIN_SCORE })
+    }
+
+    /** Exact ID route shares normalization and eligibility with semantic matching. */
+    fun resolveResourceId(resourceId: String, snapshot: ScreenSnapshot): Result = rank(
+        resourceId, snapshot, snapshot.elements
+            .filter { resourceId.isNotBlank() && it.resourceId == resourceId }
+            .map { Candidate(it, SCORE_EXACT_ID, "exact_id") },
+    )
+
+    /** Planner labels must be copied exactly, unlike natural-language queries. */
+    fun resolveLabel(label: String, snapshot: ScreenSnapshot): Result = rank(
+        label, snapshot, snapshot.elements
+            .filter { label.isNotBlank() && normalize(it.text) == normalize(label) }
+            .map { Candidate(it, SCORE_EXACT_TEXT, "exact_text") },
+    )
+
+    private fun rank(query: String, snapshot: ScreenSnapshot, matches: List<Candidate>): Result {
+        if (matches.isEmpty()) return Result.NotFound(query)
+        val failures = mutableListOf<ScreenElementIneligibility>()
+        val normalized = matches.mapNotNull { candidate ->
+            val eligibility = candidate.element.eligibility(snapshot.viewportOrLegacy)
+            if (eligibility is ScreenElementEligibility.Ineligible) {
+                failures += eligibility.reason
+                return@mapNotNull null
+            }
+            val target = actionableControl(candidate, snapshot) ?: return@mapNotNull null
+            val targetEligibility = target.eligibility(snapshot.viewportOrLegacy)
+            if (targetEligibility is ScreenElementEligibility.Ineligible) {
+                failures += targetEligibility.reason
+                return@mapNotNull null
+            }
+            candidate.copy(element = target,
+                why = if (target.index == candidate.element.index) candidate.why else "label_for_control")
+        }
+        val scored = normalized
+            .groupBy { it.element.index }.values.map { group -> group.maxBy { it.score } }
+            // Rank only normalized usable controls; preserve semantic scores.
             .sortedWith(
                 compareByDescending<Candidate> { it.score }
                     .thenByDescending { it.element.clickable || it.element.editable }
-                    .thenBy { it.element.bounds.width().toLong() * it.element.bounds.height() }
+                    .thenBy { area(it.element.bounds) }
             )
+            .fold(mutableListOf<Candidate>()) { distinct, candidate ->
+                if (distinct.none { equivalentBounds(it.bounds, candidate.bounds) }) distinct += candidate
+                distinct
+            }
 
         if (scored.isEmpty()) {
-            Log.d(TAG, "TARGET_RESOLUTION pkg=${snapshot.packageName} result=NOT_FOUND " +
-                "elements=${snapshot.elements.size}")
-            return Result.NotFound(query)
+            val result = if (failures.size == matches.size && failures.all { it in VISIBILITY_FAILURES }) {
+                Result.NotVisible(query)
+            } else Result.NotActionable(query)
+            Log.d(TAG, "TARGET_RESOLUTION result=${result.javaClass.simpleName}")
+            return result
         }
 
-        var best = scored.first()
+        val best = scored.first()
         val rivals = scored.drop(1).filter { best.score - it.score < AMBIGUITY_MARGIN }
 
-        // Two different elements scoring the same is only ambiguous if they are
-        // actually different things — a label and the button containing it are
-        // the same target, and the sort above already picked the better one.
-        val genuineRivals = rivals.filter { !overlaps(it.bounds, best.bounds) }
-        if (genuineRivals.isNotEmpty()) {
+        if (rivals.isNotEmpty()) {
             Log.d(TAG, "TARGET_RESOLUTION pkg=${snapshot.packageName} result=AMBIGUOUS " +
-                "candidates=${genuineRivals.size + 1}")
-            return Result.Ambiguous(listOf(best) + genuineRivals)
+                "candidates=${rivals.size + 1}")
+            return Result.Ambiguous(listOf(best) + rivals)
         }
 
+        Log.d(TAG, "TARGET_RESOLUTION result=FOUND score=${best.score} why=${best.why}")
+        return Result.Found(best)
+    }
+
+    private fun actionableControl(candidate: Candidate, snapshot: ScreenSnapshot): ScreenElement? {
+        val element = candidate.element
+        if (element.isActionable) return element
+        element.clickableAncestorIndex?.let { index ->
+            // Explicit ancestry is stronger than spatial proximity. An invalid
+            // ancestor must not cause a guess at a different neighbouring field.
+            return snapshot.elements.singleOrNull { it.index == index && it.isActionable }
+        }
         // A loose match in explanatory copy is not a target. An exact, short
         // static label can be mapped to an input only when the geometry is
-        // unambiguous. Keep unrelated bare text rows targetable.
-        val fields = snapshot.elements.filter { it.visibleToUser && it.enabled && it.editable && !it.password }
-        if (!best.element.isActionable) {
+        // unambiguous. Bare text without a reliable control is never a target.
+        val fields = snapshot.elements.filter {
+            it.editable && it.eligibility(snapshot.viewportOrLegacy) == ScreenElementEligibility.Eligible
+        }
+        val best = candidate
+        run {
             val containing = fields.filter { contains(it.bounds, best.bounds) }
             val below = fields.filter { field ->
                 field.bounds.top >= best.bounds.bottom &&
@@ -102,13 +155,13 @@ object TargetResolver {
                     ) * 0.3
             }
             if (containing.isNotEmpty() || below.isNotEmpty()) {
-                val shortExactLabel = best.score >= SCORE_NORMALIZED &&
+                val shortExactLabel = best.element.text.isNotBlank() && best.score >= SCORE_NORMALIZED &&
                     best.element.text.length <= MAX_FIELD_LABEL_LENGTH &&
                     best.element.text.trim().split(Regex("\\s+")).size <= MAX_FIELD_LABEL_WORDS
-                if (!shortExactLabel) return Result.NotFound(query)
-                if (containing.size > 1) return Result.NotFound(query)
-                if (containing.size + below.size != 1) return Result.NotFound(query)
-                val field = (containing + below).single()
+                if (!shortExactLabel) return null
+                val candidates = (containing + below).distinctBy { it.index }
+                if (candidates.size != 1) return null
+                val field = candidates.single()
                 val interveningLabel = snapshot.elements.any { other ->
                     other !== best.element && other.visibleToUser && !other.isActionable &&
                         other.text.isNotBlank() &&
@@ -116,26 +169,11 @@ object TargetResolver {
                         other.bounds.bottom <= field.bounds.top &&
                         horizontalOverlap(other.bounds, field.bounds) > 0
                 }
-                if (interveningLabel) return Result.NotFound(query)
-                best = Candidate(field, best.score, "label_for_editable")
-            } else if (best.score >= SCORE_NORMALIZED && fields.any { field ->
-                    field.bounds.top >= best.bounds.bottom &&
-                        field.bounds.top - best.bounds.bottom <= MAX_FORM_LABEL_DISTANCE &&
-                        horizontalOverlap(field.bounds, best.bounds) > 0
-                }) {
-                // Looks like a form label, but its control is too far away
-                // for a reliable association.
-                return Result.NotFound(query)
-            } else if (best.score < SCORE_NORMALIZED && best.element.text.length > MAX_FIELD_LABEL_LENGTH) {
-                return Result.NotFound(query)
+                if (interveningLabel) return null
+                return field
             }
         }
-
-        Log.d(TAG, "TARGET_RESOLUTION pkg=${snapshot.packageName} result=FOUND " +
-            "class=${best.element.className} clickable=${best.element.clickable} " +
-            "editable=${best.element.editable} why=${best.why} score=${best.score} " +
-            "boundsInScreen=${best.bounds.toShortString()}")
-        return Result.Found(best)
+        return null
     }
 
     private fun score(q: String, e: ScreenElement): Candidate? {
@@ -177,8 +215,13 @@ object TargetResolver {
     private val ScreenElement.isActionable: Boolean
         get() = clickable || editable
 
-    private fun overlaps(a: Rect, b: Rect): Boolean =
-        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+    private fun area(bounds: Rect): Long =
+        (bounds.right.toLong() - bounds.left) * (bounds.bottom.toLong() - bounds.top)
+
+    // Small overlaps can be genuinely distinct controls. Only equal geometry
+    // is a safe fallback when the tree omitted a shared ancestor index.
+    private fun equivalentBounds(a: Rect, b: Rect): Boolean =
+        a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom
 
     private fun contains(outer: Rect, inner: Rect): Boolean =
         outer.left <= inner.left && outer.top <= inner.top &&
@@ -190,5 +233,7 @@ object TargetResolver {
     private const val TAG = "TargetResolver"
     private const val MAX_FIELD_LABEL_LENGTH = 40
     private const val MAX_FIELD_LABEL_WORDS = 2
-    private const val MAX_FORM_LABEL_DISTANCE = 600
+    private val VISIBILITY_FAILURES = setOf(ScreenElementIneligibility.HIDDEN,
+        ScreenElementIneligibility.EMPTY_BOUNDS, ScreenElementIneligibility.OUTSIDE_VIEWPORT,
+        ScreenElementIneligibility.MOSTLY_CLIPPED)
 }

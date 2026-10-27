@@ -601,6 +601,26 @@ class SessionController(
                 )
             }
 
+            is ScenarioEffect.ShowTargetIssue -> {
+                clearScenarioDecisions()
+                currentHighlight = null
+                if (effect.issue != ScenarioTargetIssue.NOT_VISIBLE) {
+                    pendingScenarioPrimary = ScenarioChoice.REPHRASE
+                    pendingScenarioSecondary = ScenarioChoice.RETRY
+                    currentDecisionButtons = DecisionButtons("Уточнить", "Повторить")
+                }
+                val message = when (effect.issue) {
+                    ScenarioTargetIssue.NOT_VISIBLE -> "Цель за пределами видимой области. Прокрутите экран вручную."
+                    ScenarioTargetIssue.AMBIGUOUS -> "Нашлось несколько подходящих элементов. Уточните, какой нужен."
+                    ScenarioTargetIssue.NOT_ACTIONABLE -> "Не могу выделить доступную кнопку или поле. Выполните действие вручную, затем нажмите «Повторить»."
+                    ScenarioTargetIssue.NOT_FOUND -> "Не нашёл нужный элемент. Уточните запрос или повторите попытку."
+                }
+                renderIfCurrent(turn, OverlayCommand(
+                    PillState.GUIDING, expanded = true, instruction = message,
+                    language = lastLanguage, highlight = null, decisionButtons = currentDecisionButtons,
+                ))
+            }
+
             ScenarioEffect.RequestManualModalDismiss -> {
                 currentHighlight = null
                 renderIfCurrent(
@@ -657,20 +677,7 @@ class SessionController(
             }
 
             is ScenarioEffect.ShowGuidance -> {
-                val target = emission.resolvedTarget
-                if (target == null) {
-                    renderIfCurrent(
-                        turn,
-                        OverlayCommand(
-                            PillState.ERROR,
-                            expanded = true,
-                            instruction = "Не удалось надёжно найти элемент. Прокрутите экран вручную.",
-                            language = lastLanguage,
-                            highlight = null,
-                        ),
-                    )
-                    return
-                }
+                val target = emission.resolvedTarget ?: return
                 currentDecisionButtons = null
                 currentChoices = emptyList()
                 currentHighlight = HighlightBounds(
@@ -2070,6 +2077,8 @@ class SessionController(
                         "OVERLAY_CLEAR reason=ambiguous(${result.candidates.size})"
                     is TargetResolver.Result.NotFound ->
                         "OVERLAY_CLEAR reason=not_found"
+                    is TargetResolver.Result.NotVisible -> "OVERLAY_CLEAR reason=not_visible"
+                    is TargetResolver.Result.NotActionable -> "OVERLAY_CLEAR reason=not_actionable"
                 }
                 Log.d(TAG, reason)
                 currentHighlight = hl
@@ -2082,6 +2091,8 @@ class SessionController(
                     is TargetResolver.Result.Ambiguous ->
                         "Нашлось несколько похожих элементов (${result.candidates.size}). Уточните, какой нужен."
                     is TargetResolver.Result.NotFound -> "На этом экране не видно элемента «$query»."
+                    is TargetResolver.Result.NotVisible -> "Цель за пределами видимой области. Прокрутите экран вручную."
+                    is TargetResolver.Result.NotActionable -> "Не могу выделить доступную кнопку или поле. Выполните действие вручную."
                 }
                 renderIfCurrent(turn, OverlayCommand(
                     if (hl != null) PillState.GUIDING else PillState.ERROR,

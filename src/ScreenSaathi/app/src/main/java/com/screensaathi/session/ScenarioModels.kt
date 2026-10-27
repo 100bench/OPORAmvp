@@ -89,6 +89,8 @@ enum class ScenarioPlanningFailure {
     CONFIGURATION,
 }
 
+enum class ScenarioTargetIssue { NOT_VISIBLE, AMBIGUOUS, NOT_ACTIONABLE, NOT_FOUND }
+
 enum class ScenarioFailureReason {
     SCROLL_LIMIT,
     INVALID_PLANNER_RESPONSE,
@@ -141,6 +143,7 @@ sealed interface ScenarioEvent {
     object PhysicalTapTimedOut : ScenarioEvent
     data class CachedGuideInvalidated(val fingerprint: String) : ScenarioEvent
     object TargetNotFound : ScenarioEvent
+    data class TargetUnavailable(val issue: ScenarioTargetIssue) : ScenarioEvent
     data class ModalCloseAvailable(val guidance: ScenarioGuidance) : ScenarioEvent
     object ManualDismissRequired : ScenarioEvent
     object AuthenticationRequired : ScenarioEvent
@@ -173,6 +176,7 @@ sealed interface ScenarioEffect {
     object ShowIdle : ScenarioEffect
     object FinishScenario : ScenarioEffect
     object RequestManualScroll : ScenarioEffect
+    data class ShowTargetIssue(val issue: ScenarioTargetIssue) : ScenarioEffect
     object RequestManualModalDismiss : ScenarioEffect
     object RecheckModalAfterSettling : ScenarioEffect
 
