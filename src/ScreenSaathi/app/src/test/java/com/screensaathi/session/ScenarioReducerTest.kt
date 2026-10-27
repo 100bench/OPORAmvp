@@ -18,6 +18,10 @@ class ScenarioReducerTest {
             assertEquals(issue == ScenarioTargetIssue.NOT_VISIBLE,
                 result.session.phase == ScenarioPhase.WAITING_FOR_MANUAL_SCROLL)
             assertTrue(result.effects.none { it is ScenarioEffect.ShowGuidance })
+            assertTrue(result.effects.none {
+                it is ScenarioEffect.RetryPlanning || it == ScenarioEffect.AnalyzeCurrentScreen
+            })
+            assertEquals(0, result.session.replanFailures)
             assertNull(result.session.currentGuidance)
             if (issue != ScenarioTargetIssue.NOT_VISIBLE) {
                 assertEquals(ScenarioPhase.ANALYZING_SCREEN,
@@ -374,7 +378,8 @@ class ScenarioReducerTest {
         )
         assertEquals(ScenarioPhase.ANALYZING_SCREEN, first.session.phase)
         assertEquals(1, first.session.replanFailures)
-        assertEquals(true, first.effects.filterIsInstance<ScenarioEffect.RetryPlanning>().single().repairFormat)
+        assertEquals(ScenarioPlanningAttempt.FORMAT_REPAIR,
+            first.effects.filterIsInstance<ScenarioEffect.RetryPlanning>().single().attempt)
 
         val second = reduce(
             first.session,

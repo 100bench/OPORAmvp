@@ -593,7 +593,7 @@ object ScenarioReducer {
                 if (failures <= MAX_AUTOMATIC_RETRIES) {
                     ScenarioTransition(
                         session.copy(replanFailures = failures, updatedAtMs = nowMs),
-                        listOf(ScenarioEffect.RetryPlanning(repairFormat = true)),
+                        listOf(ScenarioEffect.RetryPlanning(ScenarioPlanningAttempt.FORMAT_REPAIR)),
                     )
                 } else {
                     fail(

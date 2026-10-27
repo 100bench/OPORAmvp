@@ -59,6 +59,12 @@ class UniversalGuidanceLoop(
 
     private var pendingTarget: ResolvedScenarioTarget? = null
     private var modalSettleChecks = 0
+    private data class PlanningAttempt(
+        val fingerprint: String,
+        val kind: ScenarioPlanningAttempt,
+    )
+    // Only a local freshness hash and request kind; never cache raw UI content.
+    private var inFlightAttempt: PlanningAttempt? = null
 
     val session: ScenarioSession
         get() = synchronized(lock) { state }
@@ -73,6 +79,7 @@ class UniversalGuidanceLoop(
             state = ScenarioSession.idle(clock())
             pendingTarget = null
             modalSettleChecks = 0
+            inFlightAttempt = null
         }
         // The caller already supplied the recognized text. StartRequested is
         // still reduced to establish the phase, but its microphone effect is
@@ -88,6 +95,7 @@ class UniversalGuidanceLoop(
             state = ScenarioSession.idle(clock())
             pendingTarget = null
             modalSettleChecks = 0
+            inFlightAttempt = null
         }
         dispatch(ScenarioEvent.ResumeRequested(capsule), token)
     }
@@ -161,7 +169,7 @@ class UniversalGuidanceLoop(
     }
 
     /** Delayed local retry for a dialog whose Accessibility tree was still changing. */
-    fun recheckCurrentScreen() = analyzeCurrentScreen(generation.get(), repairFormat = false)
+    fun recheckCurrentScreen() = analyzeCurrentScreen(generation.get())
 
     fun continueAfterAuth() = dispatch(ScenarioEvent.ContinueRequested, generation.get())
 
@@ -202,6 +210,7 @@ class UniversalGuidanceLoop(
             state = next.session
             pendingTarget = null
             modalSettleChecks = 0
+            inFlightAttempt = null
             next
         }
         transition.effects.forEach { execute(it, token) }
@@ -211,6 +220,7 @@ class UniversalGuidanceLoop(
         event: ScenarioEvent,
         token: Long,
         suppressRecognition: Boolean = false,
+        staleReplans: Int = 0,
     ) {
         if (token != generation.get()) return
         val transition = synchronized(lock) {
@@ -224,15 +234,15 @@ class UniversalGuidanceLoop(
                 token == generation.get() &&
                 !(suppressRecognition && effect == ScenarioEffect.BeginRecognition)
             ) {
-                execute(effect, token)
+                execute(effect, token, staleReplans)
             }
         }
     }
 
-    private fun execute(effect: ScenarioEffect, token: Long) {
+    private fun execute(effect: ScenarioEffect, token: Long, staleReplans: Int = 0) {
         when (effect) {
-            ScenarioEffect.AnalyzeCurrentScreen -> analyzeCurrentScreen(token, repairFormat = false)
-            is ScenarioEffect.RetryPlanning -> analyzeCurrentScreen(token, effect.repairFormat)
+            ScenarioEffect.AnalyzeCurrentScreen -> analyzeCurrentScreen(token)
+            is ScenarioEffect.RetryPlanning -> analyzeCurrentScreen(token, effect.attempt, staleReplans)
             ScenarioEffect.ClearHighlight -> {
                 synchronized(lock) { pendingTarget = null }
                 emit(UniversalGuidanceEmission(effect))
@@ -247,7 +257,7 @@ class UniversalGuidanceLoop(
 
     private fun analyzeCurrentScreen(
         token: Long,
-        repairFormat: Boolean,
+        attemptKind: ScenarioPlanningAttempt = ScenarioPlanningAttempt.PRIMARY,
         staleReplans: Int = 0,
     ) {
         if (token != generation.get()) return
@@ -300,7 +310,7 @@ class UniversalGuidanceLoop(
                 if (staleReplans >= MAX_STALE_REPLANS) {
                     dispatch(ScenarioEvent.ManualDismissRequired, token)
                 } else {
-                    analyzeCurrentScreen(token, repairFormat = false,
+                    analyzeCurrentScreen(token,
                         staleReplans = staleReplans + 1)
                 }
                 return
@@ -361,58 +371,73 @@ class UniversalGuidanceLoop(
             return
         }
 
-        val outcome = planner.planNext(
-            screen = safeScreen,
-            goal = current.goal,
-            stepNumber = current.stepNumber + 1,
-            lastSafeInstruction = current.lastSafeInstruction,
-            repairFormat = repairFormat,
-        )
-        if (token != generation.get()) return
-
-        // The provider response is valid only for the raw tree it was given.
-        // Accessibility events can arrive while the blocking request is in
-        // flight; never cache or render geometry from the old screen.
-        val latest = snapshotProvider()
-        val latestFingerprint = latest.signature()
-        when (assess(latest).disposition) {
-            ScreenDisposition.PAUSE_AUTH -> {
-                dispatch(ScenarioEvent.AuthenticationRequired, token)
-                return
-            }
-            ScreenDisposition.SAFE_HANDOFF -> {
-                dispatch(ScenarioEvent.SafeHandoffRequired, token)
-                return
-            }
-            ScreenDisposition.ALLOW -> Unit
+        val attempt = synchronized(lock) {
+            if (token != generation.get() || state.phase != ScenarioPhase.ANALYZING_SCREEN) return
+            val existing = inFlightAttempt
+            if (existing?.fingerprint == snapshotIdentity &&
+                (attemptKind == ScenarioPlanningAttempt.PRIMARY ||
+                    existing.kind == ScenarioPlanningAttempt.FORMAT_REPAIR)) return
+            // A repair belongs to the original tree. A new tree gets a primary call.
+            val kind = if (existing?.fingerprint != snapshotIdentity) {
+                ScenarioPlanningAttempt.PRIMARY
+            } else attemptKind
+            PlanningAttempt(snapshotIdentity, kind).also { inFlightAttempt = it }
         }
-        val latestSafe = ScreenSanitizer.sanitize(latest)
-        if (!latest.settled || latestSafe.elements.isEmpty() || latestFingerprint.isBlank()) {
-            dispatch(ScenarioEvent.TargetNotFound, token)
-            return
-        }
-        if (latest.localIdentity() != snapshotIdentity) {
-            if (staleReplans >= MAX_STALE_REPLANS) {
-                dispatch(ScenarioEvent.TargetNotFound, token)
-            } else {
-                if (latestFingerprint != fingerprint) {
-                    dispatch(ScenarioEvent.ScreenObserved(latestFingerprint), token)
-                }
-                analyzeCurrentScreen(
-                    token,
-                    repairFormat = false,
-                    staleReplans = staleReplans + 1,
-                )
-            }
-            return
-        }
-
-        when (outcome) {
-            is PlannerOutcome.Failure -> dispatch(
-                ScenarioEvent.PlannerFailed(outcome.kind.toScenarioFailure()),
-                token,
+        try {
+            val outcome = planner.planNext(
+                screen = safeScreen,
+                goal = current.goal,
+                stepNumber = current.stepNumber + 1,
+                lastSafeInstruction = current.lastSafeInstruction,
+                repairFormat = attempt.kind == ScenarioPlanningAttempt.FORMAT_REPAIR,
             )
-            is PlannerOutcome.Success -> acceptPlan(outcome.plan, raw, token, repairFormat, staleReplans)
+            if (token != generation.get()) return
+            if (synchronized(lock) { inFlightAttempt !== attempt }) return
+
+            // The provider response belongs to this exact raw tree, including
+            // viewport-only changes which may leave semantic labels unchanged.
+            val latest = snapshotProvider()
+            val latestFingerprint = latest.signature()
+            when (assess(latest).disposition) {
+                ScreenDisposition.PAUSE_AUTH -> {
+                    dispatch(ScenarioEvent.AuthenticationRequired, token)
+                    return
+                }
+                ScreenDisposition.SAFE_HANDOFF -> {
+                    dispatch(ScenarioEvent.SafeHandoffRequired, token)
+                    return
+                }
+                ScreenDisposition.ALLOW -> Unit
+            }
+            val latestSafe = ScreenSanitizer.sanitize(latest)
+            if (!latest.settled || latestSafe.elements.isEmpty() || latestFingerprint.isBlank()) {
+                dispatch(ScenarioEvent.TargetNotFound, token)
+                return
+            }
+            if (latest.localIdentity() != snapshotIdentity) {
+                if (staleReplans >= MAX_STALE_REPLANS) {
+                    dispatch(ScenarioEvent.TargetNotFound, token)
+                } else {
+                    if (latestFingerprint != fingerprint) {
+                        dispatch(ScenarioEvent.ScreenObserved(latestFingerprint), token)
+                    }
+                    analyzeCurrentScreen(token, staleReplans = staleReplans + 1)
+                }
+                return
+            }
+
+            when (outcome) {
+                is PlannerOutcome.Failure -> dispatch(
+                    ScenarioEvent.PlannerFailed(outcome.kind.toScenarioFailure()),
+                    token,
+                    staleReplans = staleReplans,
+                )
+                is PlannerOutcome.Success -> acceptPlan(outcome.plan, raw, token, staleReplans)
+            }
+        } finally {
+            synchronized(lock) {
+                if (inFlightAttempt === attempt) inFlightAttempt = null
+            }
         }
     }
 
@@ -431,11 +456,11 @@ class UniversalGuidanceLoop(
         plan: PlannerResult,
         raw: ScreenSnapshot,
         token: Long,
-        repairFormat: Boolean,
         staleReplans: Int,
     ) {
         if (!SafetyGuard.isReadOnlyGuidanceAction(plan.actionType)) {
-            dispatch(ScenarioEvent.PlannerFailed(ScenarioPlanningFailure.INVALID_RESPONSE), token)
+            dispatch(ScenarioEvent.PlannerFailed(ScenarioPlanningFailure.INVALID_RESPONSE), token,
+                staleReplans = staleReplans)
             return
         }
         if (plan.isDone || plan.actionType == "answer") {
@@ -443,18 +468,6 @@ class UniversalGuidanceLoop(
             return
         }
 
-        val result = resolve(plan, raw)
-        if (result !is TargetResolver.Result.Found) {
-            if (repairFormat) {
-                dispatch(ScenarioEvent.TargetUnavailable(result.toTargetIssue()), token)
-            } else {
-                // The model may invent a plausible ID for a real, unlabelled
-                // control. Give it one chance to select an exact visible label
-                // before telling the person to scroll a screen that is present.
-                analyzeCurrentScreen(token, repairFormat = true, staleReplans = staleReplans)
-            }
-            return
-        }
         val semanticTarget = runCatching {
             ScenarioTarget(
                 resourceId = plan.targetResourceId.takeIf(String::isNotBlank),
@@ -462,7 +475,14 @@ class UniversalGuidanceLoop(
             )
         }.getOrNull()
         if (semanticTarget == null) {
-            dispatch(ScenarioEvent.PlannerFailed(ScenarioPlanningFailure.INVALID_RESPONSE), token)
+            dispatch(ScenarioEvent.PlannerFailed(ScenarioPlanningFailure.INVALID_RESPONSE), token,
+                staleReplans = staleReplans)
+            return
+        }
+
+        val result = resolve(plan, raw)
+        if (result !is TargetResolver.Result.Found) {
+            dispatch(ScenarioEvent.TargetUnavailable(result.toTargetIssue()), token)
             return
         }
 

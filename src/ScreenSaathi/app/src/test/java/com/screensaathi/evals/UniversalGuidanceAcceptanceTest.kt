@@ -10,6 +10,7 @@ import com.screensaathi.screen.ScreenSnapshot
 import com.screensaathi.screen.ScreenViewport
 import com.screensaathi.session.ScenarioEffect
 import com.screensaathi.session.ScenarioPhase
+import com.screensaathi.session.ScenarioTargetIssue
 import com.screensaathi.session.UniversalGuidanceEmission
 import com.screensaathi.session.UniversalGuidanceLoop
 import java.io.File
@@ -20,6 +21,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UniversalGuidanceAcceptanceTest {
+
+    @Test
+    fun `valid fixture plan with a local target issue makes only one planner call`() {
+        val base = fixture("ui_trees/yandex_go/destination.json")
+        val target = base.snapshot.elements.first { it.resourceId == base.plan.targetResourceId }
+        val other = target.copy(index = 90, resourceId = "other", text = "Другое", contentDescription = "Другое")
+        val cases = listOf(
+            listOf(target.copy(visibleToUser = false)) to ScenarioTargetIssue.NOT_VISIBLE,
+            listOf(target, target.copy(index = 91, bounds = Rect().apply {
+                left = 48; top = 500; right = 1032; bottom = 630
+            })) to ScenarioTargetIssue.AMBIGUOUS,
+            listOf(target.copy(enabled = false)) to ScenarioTargetIssue.NOT_ACTIONABLE,
+            emptyList<ScreenElement>() to ScenarioTargetIssue.NOT_FOUND,
+        )
+        cases.forEach { (targets, issue) ->
+            val snapshot = base.snapshot.copy(elements = targets + other)
+            val planner = FixturePlanner(base.plan)
+            val emissions = mutableListOf<UniversalGuidanceEmission>()
+            val loop = UniversalGuidanceLoop(planner, { snapshot }, emit = emissions::add)
+
+            loop.startGoal(base.goal)
+            loop.observeScreen(snapshot)
+            loop.recheckCurrentScreen()
+
+            assertEquals(issue.name, 1, planner.calls)
+            assertTrue(issue.name, emissions.any { it.effect == ScenarioEffect.ShowTargetIssue(issue) })
+            assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance || it.resolvedTarget != null })
+        }
+    }
 
     @Test
     fun `synthetic address button with weak map PIN chrome reaches one guide`() {

@@ -89,6 +89,8 @@ enum class ScenarioPlanningFailure {
     CONFIGURATION,
 }
 
+enum class ScenarioPlanningAttempt { PRIMARY, FORMAT_REPAIR }
+
 enum class ScenarioTargetIssue { NOT_VISIBLE, AMBIGUOUS, NOT_ACTIONABLE, NOT_FOUND }
 
 enum class ScenarioFailureReason {
@@ -193,7 +195,7 @@ sealed interface ScenarioEffect {
     data class ShowGuidance(val guidance: ScenarioGuidance) : ScenarioEffect
     data class SpeakText(val text: String) : ScenarioEffect
     data class ShowSafeHandoff(val notice: ScenarioNotice = ScenarioNotice.SAFE_HANDOFF) : ScenarioEffect
-    data class RetryPlanning(val repairFormat: Boolean) : ScenarioEffect
+    data class RetryPlanning(val attempt: ScenarioPlanningAttempt) : ScenarioEffect
     data class ShowRecoverableFailure(
         val reason: ScenarioFailureReason,
         val choices: List<ScenarioChoice>,

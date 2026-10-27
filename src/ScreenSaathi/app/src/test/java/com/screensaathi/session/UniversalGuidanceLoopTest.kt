@@ -63,7 +63,7 @@ class UniversalGuidanceLoopTest {
         loop.startGoal("Найти поле")
         assertTrue(emissions.none { it.effect is ScenarioEffect.ConfirmGoal || it.resolvedTarget != null })
         assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
-        assertEquals(3, calls) // one stale response, one current plan, one legacy repair
+        assertEquals(2, calls) // one stale response and one current plan
     }
 
     @Test
@@ -81,7 +81,18 @@ class UniversalGuidanceLoopTest {
     }
 
     @Test
-    fun `id and text misses distinguish unavailable controls without emitting geometry`() {
+    fun `not visible id and text targets use one call`() = assertLocalTargetIssue("NOT_VISIBLE")
+
+    @Test
+    fun `ambiguous id and text targets use one call`() = assertLocalTargetIssue("AMBIGUOUS")
+
+    @Test
+    fun `not actionable id and text targets use one call`() = assertLocalTargetIssue("NOT_ACTIONABLE")
+
+    @Test
+    fun `not found id and text targets use one call`() = assertLocalTargetIssue("NOT_FOUND")
+
+    private fun assertLocalTargetIssue(expectedIssue: String) {
         val base = element(0, "destination", "Куда", 10)
         val cases = listOf(
             listOf(base.copy(bounds = testRect(10, 2157, 400, 2290))) to "NOT_VISIBLE",
@@ -90,15 +101,20 @@ class UniversalGuidanceLoopTest {
             listOf(base, base.copy(index = 1, bounds = testRect(200, 20, 300, 80))) to "AMBIGUOUS",
             emptyList<ScreenElement>() to "NOT_FOUND",
         )
-        cases.forEach { (nodes, issue) ->
+        cases.filter { it.second == expectedIssue }.forEach { (nodes, issue) ->
             listOf(guide("Нажмите поле.", resourceId = "destination"),
                 guide("Нажмите поле.", targetText = "Куда")).forEach { plan ->
                 val raw = ScreenSnapshot("example.app", true,
                     nodes + element(9, "other", "Другое", 500),
                     viewport = com.screensaathi.screen.ScreenViewport(0, 0, 1080, 2153))
                 val emissions = mutableListOf<UniversalGuidanceEmission>()
-                val loop = UniversalGuidanceLoop(RepeatingPlanner(plan), { raw }, clock(), emissions::add)
+                val planner = RepeatingPlanner(plan)
+                val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
                 loop.startGoal("Найти поле")
+                loop.observeScreen(raw)
+                loop.recheckCurrentScreen()
+                assertEquals("$issue must not retry a valid response", 1, planner.calls)
+                assertEquals(listOf(false), planner.repairFlags)
                 assertTrue("Missing typed $issue", emissions.any {
                     it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.valueOf(issue))
                 })
@@ -106,6 +122,119 @@ class UniversalGuidanceLoopTest {
                 assertEquals(issue == "NOT_VISIBLE", loop.session.phase == ScenarioPhase.WAITING_FOR_MANUAL_SCROLL)
             }
         }
+    }
+
+    @Test
+    fun `duplicate analysis while the same tree is in flight does not call the planner twice`() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val planner = object : GuidancePlanner {
+            override fun planNext(screen: PlannerScreen, goal: String, stepNumber: Int,
+                lastSafeInstruction: String?, repairFormat: Boolean): PlannerOutcome {
+                if (calls.incrementAndGet() == 1) {
+                    entered.countDown()
+                    assertTrue(release.await(2, TimeUnit.SECONDS))
+                }
+                return guide("Нажмите поле.", resourceId = "destination")
+            }
+        }
+        val emissions = java.util.Collections.synchronizedList(mutableListOf<UniversalGuidanceEmission>())
+        val loop = UniversalGuidanceLoop(planner, { stableScreen() }, clock(), emissions::add)
+        val worker = Thread { loop.startGoal("Найти поле") }
+        worker.start()
+        try {
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            loop.observeScreen()
+            loop.recheckCurrentScreen()
+        } finally {
+            release.countDown()
+            worker.join(2_000)
+        }
+        assertFalse(worker.isAlive)
+        assertEquals(1, calls.get())
+        assertEquals(1, emissions.count { it.effect is ScenarioEffect.ConfirmGoal })
+    }
+
+    @Test
+    fun `format repair is capped at one and its local miss never requests a third call`() {
+        listOf(
+            PlannerOutcome.Failure(PlannerFailureKind.INVALID_RESPONSE, "bad schema"),
+            guide("Нажмите поле.", resourceId = "invented"),
+        ).forEach { repairedOutcome ->
+            val planner = QueuePlanner(
+                PlannerOutcome.Failure(PlannerFailureKind.INVALID_RESPONSE, "bad schema"),
+                repairedOutcome,
+            )
+            val emissions = mutableListOf<UniversalGuidanceEmission>()
+            val loop = UniversalGuidanceLoop(planner, { stableScreen() }, clock(), emissions::add)
+            loop.startGoal("Найти поле")
+            assertEquals(2, planner.calls)
+            assertEquals(listOf(false, true), planner.repairFlags)
+            assertEquals(ScenarioPhase.FAILED, loop.session.phase)
+            assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance || it.resolvedTarget != null })
+        }
+    }
+
+    @Test
+    fun `format repair cannot reset the bounded changed tree replan budget`() {
+        val screens = listOf(
+            screen("one", "one", "Один", 10),
+            screen("two", "two", "Два", 20),
+            screen("three", "three", "Три", 30),
+        )
+        val current = AtomicReference(screens[0])
+        val flags = mutableListOf<Boolean>()
+        val planner = object : GuidancePlanner {
+            override fun planNext(screen: PlannerScreen, goal: String, stepNumber: Int,
+                lastSafeInstruction: String?, repairFormat: Boolean): PlannerOutcome {
+                flags += repairFormat
+                return when (flags.size) {
+                    1 -> {
+                        current.set(screens[1])
+                        guide("Нажмите элемент.", resourceId = "one")
+                    }
+                    2 -> PlannerOutcome.Failure(PlannerFailureKind.INVALID_RESPONSE, "bad schema")
+                    else -> {
+                        current.set(screens[2])
+                        guide("Нажмите элемент.", resourceId = "three")
+                    }
+                }
+            }
+        }
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { current.get() }, clock(), emissions::add)
+        loop.startGoal("Найти элемент")
+        assertEquals(listOf(false, false, true), flags)
+        assertEquals(ScenarioPhase.WAITING_FOR_MANUAL_SCROLL, loop.session.phase)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ConfirmGoal || it.resolvedTarget != null })
+    }
+
+    @Test
+    fun `tree changed during format repair gets a fresh primary and its own single repair`() {
+        val original = stableScreen()
+        val next = screen("next", "search", "Поиск", 10)
+        val current = AtomicReference(original)
+        val flags = mutableListOf<Boolean>()
+        val planner = object : GuidancePlanner {
+            override fun planNext(screen: PlannerScreen, goal: String, stepNumber: Int,
+                lastSafeInstruction: String?, repairFormat: Boolean): PlannerOutcome {
+                flags += repairFormat
+                if (flags.size == 2) current.set(next)
+                return if (flags.size < 4) {
+                    PlannerOutcome.Failure(PlannerFailureKind.INVALID_RESPONSE, "bad schema")
+                } else guide("Нажмите поиск.", resourceId = "search")
+            }
+        }
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { current.get() }, clock(), emissions::add)
+        loop.startGoal("Найти поле")
+        assertEquals(listOf(false, true, false, true), flags)
+        assertEquals(ScenarioPhase.CONFIRMING_GOAL, loop.session.phase)
+        loop.confirmGoal()
+        val shown = emissions.single { it.effect is ScenarioEffect.ShowGuidance }
+        assertEquals("search", shown.resolvedTarget?.resourceId)
+        assertEquals(next.signature(), shown.resolvedTarget?.fingerprint)
     }
 
     @Test
@@ -380,7 +509,7 @@ class UniversalGuidanceLoopTest {
     }
 
     @Test
-    fun `invented id gets one repair and an exact field label guides the nearby input`() {
+    fun `invented id reports a local miss without requesting a different target`() {
         val label = element(0, "", "Госномер", 45).copy(
             clickable = false,
             bounds = testRect(45, 265, 413, 365),
@@ -399,21 +528,16 @@ class UniversalGuidanceLoopTest {
 
         loop.startGoal("Указать госномер")
 
-        assertEquals(2, planner.calls)
-        assertEquals(listOf(false, true), planner.repairFlags)
-        assertEquals(ScenarioPhase.CONFIRMING_GOAL, loop.session.phase)
+        assertEquals(1, planner.calls)
+        assertEquals(listOf(false), planner.repairFlags)
+        assertEquals(ScenarioPhase.FAILED, loop.session.phase)
+        assertTrue(emissions.any { it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.NOT_FOUND) })
         assertTrue(emissions.none { it.effect is ScenarioEffect.RequestManualScroll })
-
-        loop.confirmGoal()
-        val resolved = emissions.last { it.effect is ScenarioEffect.ShowGuidance }.resolvedTarget
-        assertEquals(field.bounds.left, resolved?.left)
-        assertEquals(field.bounds.top, resolved?.top)
-        assertEquals(field.bounds.right, resolved?.right)
-        assertEquals(field.bounds.bottom, resolved?.bottom)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance || it.resolvedTarget != null })
     }
 
     @Test
-    fun `two invented ids end in bounded manual recovery`() {
+    fun `invented id ends in local recovery after one call`() {
         val raw = screen("one", "visible", "Видимая кнопка", 10)
         val planner = QueuePlanner(
             guide("Нажмите кнопку.", resourceId = "invented_one"),
@@ -424,7 +548,7 @@ class UniversalGuidanceLoopTest {
 
         loop.startGoal("Продолжить")
 
-        assertEquals(2, planner.calls)
+        assertEquals(1, planner.calls)
         assertEquals(ScenarioPhase.FAILED, loop.session.phase)
         assertTrue(emissions.any { it.effect == ScenarioEffect.ShowTargetIssue(ScenarioTargetIssue.NOT_FOUND) })
         assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
@@ -442,7 +566,7 @@ class UniversalGuidanceLoopTest {
 
         loop.startGoal("Указать госномер")
 
-        assertEquals(2, planner.calls)
+        assertEquals(1, planner.calls)
         assertEquals(ScenarioPhase.FAILED, loop.session.phase)
         assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
     }
@@ -458,7 +582,7 @@ class UniversalGuidanceLoopTest {
 
         loop.startGoal("Продолжить")
 
-        assertEquals(2, planner.calls)
+        assertEquals(1, planner.calls)
         assertEquals(ScenarioPhase.FAILED, loop.session.phase)
         assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
     }
@@ -474,7 +598,7 @@ class UniversalGuidanceLoopTest {
 
         loop.startGoal("Продолжить")
 
-        assertEquals(2, planner.calls)
+        assertEquals(1, planner.calls)
         assertEquals(ScenarioPhase.FAILED, loop.session.phase)
         assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance })
     }
@@ -693,7 +817,7 @@ class UniversalGuidanceLoopTest {
         val failure = emissions.map { it.effect }
             .filterIsInstance<ScenarioEffect.ShowRecoverableFailure>().last()
         assertEquals(ScenarioFailureReason.SCROLL_LIMIT, failure.reason)
-        assertEquals(8, planner.calls)
+        assertEquals(4, planner.calls)
     }
 
     @Test
@@ -949,6 +1073,20 @@ class UniversalGuidanceLoopTest {
         networkLoop.startGoal("Заказать такси")
         assertEquals(1, network.calls)
         assertEquals(ScenarioPhase.PAUSED_FOR_NETWORK, networkLoop.session.phase)
+    }
+
+    @Test
+    fun `guide without a semantic target is malformed and may repair its format once`() {
+        val planner = QueuePlanner(
+            guide("Нажмите поле."),
+            guide("Нажмите поле.", resourceId = "destination"),
+        )
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { stableScreen() }, clock(), emissions::add)
+        loop.startGoal("Найти поле")
+        assertEquals(listOf(false, true), planner.repairFlags)
+        assertEquals(ScenarioPhase.CONFIRMING_GOAL, loop.session.phase)
+        assertTrue(emissions.none { it.effect is ScenarioEffect.ShowTargetIssue })
     }
 
     @Test
