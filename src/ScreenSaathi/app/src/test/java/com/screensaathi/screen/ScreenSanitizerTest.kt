@@ -10,6 +10,23 @@ import org.junit.Test
 class ScreenSanitizerTest {
 
     @Test
+    fun `provider context excludes clipped geometry but retains disabled visible captions`() {
+        val screen = snapshot(
+            element(index = 1, text = "Visible"),
+            element(index = 2, text = "Below").copy(bounds = rect(0, 2157, 100, 2200)),
+            element(index = 3, text = "Clipped").copy(bounds = rect(-90, 0, 10, 100)),
+            element(index = 4, text = "Empty").copy(bounds = rect(0, 0, 0, 100)),
+            element(index = 5, text = "Unavailable caption", enabled = false, clickable = true),
+        ).copy(viewport = ScreenViewport(0, 0, 1080, 2153))
+
+        val planner = ScreenSanitizer.sanitize(screen)
+
+        assertEquals(listOf(1, 5), planner.elements.map { it.index })
+        assertFalse(planner.elements.last().enabled)
+        assertEquals("Unavailable caption", planner.elements.last().label)
+    }
+
+    @Test
     fun `planner DTO contains semantic data and cannot represent coordinates`() {
         val planner = ScreenSanitizer.sanitize(
             snapshot(
@@ -146,7 +163,7 @@ class ScreenSanitizerTest {
         contentDescription = contentDescription,
         hintText = hintText,
         className = className,
-        bounds = Rect(10, 20, 110, 120),
+        bounds = rect(10, 20, 110, 120),
         editable = editable,
         clickable = clickable,
         enabled = enabled,
@@ -156,4 +173,8 @@ class ScreenSanitizerTest {
         password = password,
         visibleToUser = visibleToUser,
     )
+
+    private fun rect(l: Int, t: Int, r: Int, b: Int) = Rect().apply {
+        left = l; top = t; right = r; bottom = b
+    }
 }

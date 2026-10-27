@@ -7,6 +7,7 @@ import com.screensaathi.sarvam.PlannerResult
 import com.screensaathi.screen.PlannerScreen
 import com.screensaathi.screen.ScreenElement
 import com.screensaathi.screen.ScreenSnapshot
+import com.screensaathi.screen.ScreenViewport
 import com.screensaathi.session.ScenarioEffect
 import com.screensaathi.session.ScenarioPhase
 import com.screensaathi.session.UniversalGuidanceEmission
@@ -169,6 +170,9 @@ class UniversalGuidanceAcceptanceTest {
         val snapshot = ScreenSnapshot(
             packageName = root.getString("package_name"),
             settled = root.getBoolean("settled"),
+            viewport = root.optJSONObject("viewport")?.let {
+                ScreenViewport(it.getInt("left"), it.getInt("top"), it.getInt("right"), it.getInt("bottom"))
+            } ?: ScreenViewport.LEGACY_UNBOUNDED,
             elements = List(elements.length()) { index ->
                 val node = elements.getJSONObject(index)
                 val bounds = node.getJSONArray("bounds")
@@ -177,12 +181,12 @@ class UniversalGuidanceAcceptanceTest {
                     resourceId = node.optString("resource_id"),
                     text = node.optString("text"),
                     className = node.optString("class_name", "android.view.View"),
-                    bounds = Rect(
-                        bounds.getInt(0),
-                        bounds.getInt(1),
-                        bounds.getInt(2),
-                        bounds.getInt(3),
-                    ),
+                    bounds = Rect().apply {
+                        left = bounds.getInt(0)
+                        top = bounds.getInt(1)
+                        right = bounds.getInt(2)
+                        bottom = bounds.getInt(3)
+                    },
                     editable = node.optBoolean("editable"),
                     clickable = node.optBoolean("clickable"),
                     contentDescription = node.optString("content_description"),

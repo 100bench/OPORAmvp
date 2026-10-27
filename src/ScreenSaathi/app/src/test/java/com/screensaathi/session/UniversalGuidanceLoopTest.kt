@@ -1016,7 +1016,7 @@ class UniversalGuidanceLoopTest {
             resourceId = resourceId,
             text = text,
             className = if (editable) "EditText" else "Button",
-            bounds = Rect(left, 20, left + 100, 80),
+            bounds = testRect(left, 20, left + 100, 80),
             editable = editable,
             clickable = !editable,
             hintText = hint,

@@ -11,7 +11,7 @@ object ScreenSanitizer {
         packageName = snapshot.packageName,
         settled = snapshot.settled,
         elements = snapshot.elements.asSequence()
-            .filter { it.visibleToUser && !it.password }
+            .filter { it.contextEligibility(snapshot.viewportOrLegacy) == ScreenElementEligibility.Eligible }
             .map(::sanitizeElement)
             .toList(),
     )

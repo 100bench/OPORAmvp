@@ -36,9 +36,11 @@ data class ScreenSnapshot(
     val elements: List<ScreenElement>,
     /** True only for a visible dialog node in the current Accessibility tree. */
     val activeDialog: Boolean = false,
-    /** Null only for legacy captures until the live reader supplies window bounds. */
+    /** Null only for legacy synthetic constructors/captures; live snapshots always have bounds. */
     val viewport: ScreenViewport? = null,
 ) {
+    val viewportOrLegacy: ScreenViewport get() = viewport ?: ScreenViewport.LEGACY_UNBOUNDED
+
     /** Live bounds for a step's resource_id, or null if not currently on screen. */
     fun boundsForResourceId(resourceId: String): Rect? {
         if (resourceId.isEmpty()) return null
@@ -102,7 +104,7 @@ data class ScreenSnapshot(
     fun toPromptText(): String = ScreenSanitizer.sanitize(this).toPromptText()
 
     companion object {
-        val EMPTY = ScreenSnapshot("", settled = false, elements = emptyList())
+        val EMPTY = ScreenSnapshot("", settled = false, elements = emptyList(), viewport = ScreenViewport.EMPTY)
     }
 
     /**

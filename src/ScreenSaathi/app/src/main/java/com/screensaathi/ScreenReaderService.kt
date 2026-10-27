@@ -8,6 +8,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.screensaathi.screen.ScreenElement
 import com.screensaathi.screen.ScreenSnapshot
+import com.screensaathi.screen.ScreenViewport
 import com.screensaathi.screen.DialogEvidence
 import com.screensaathi.session.SessionController
 
@@ -170,9 +171,16 @@ class ScreenReaderService : AccessibilityService() {
      * Falls back to the window list, preferring real application windows over
      * system ones and topmost over lower layers.
      */
-    private fun resolveRoot(): AccessibilityNodeInfo? {
-        rootInActiveWindow?.let { return it }
+    private data class RootWindow(val root: AccessibilityNodeInfo, val viewport: ScreenViewport)
+
+    private fun resolveRoot(): RootWindow? {
         return try {
+            rootInActiveWindow?.let { root ->
+                // A root may outlive a window-list refresh. Use its own window,
+                // or the matching ID only; never attach another window's bounds.
+                val window = root.window ?: windows.firstOrNull { it.id == root.windowId }
+                if (window != null) return RootWindow(root, window.viewport())
+            }
             windows
                 .filter {
                     it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION ||
@@ -183,23 +191,30 @@ class ScreenReaderService : AccessibilityService() {
                         if (it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) 0 else 1
                     }.thenByDescending { it.layer }
                 )
-                .firstNotNullOfOrNull { it.root }
+                .firstNotNullOfOrNull { window ->
+                    window.root?.let { RootWindow(it, window.viewport()) }
+                }
         } catch (e: Exception) {
             // The window list can throw while the screen is changing.
             null
         }
     }
 
+    private fun AccessibilityWindowInfo.viewport(): ScreenViewport {
+        val bounds = Rect().also(::getBoundsInScreen)
+        return ScreenViewport(bounds.left, bounds.top, bounds.right, bounds.bottom)
+    }
 
     fun snapshot(): ScreenSnapshot {
-        val root = resolveRoot() ?: return ScreenSnapshot.EMPTY
+        val selected = resolveRoot() ?: return ScreenSnapshot.EMPTY
+        val root = selected.root
         val pkg = root.packageName?.toString() ?: ""
         val elements = ArrayList<ScreenElement>()
         val counter = intArrayOf(0)
         val dialogSeen = booleanArrayOf(false)
         walk(root, elements, counter, inDialog = false, dialogSeen,
             clickableAncestorIndex = null)
-        return ScreenSnapshot(pkg, isSettled(), elements, activeDialog = dialogSeen[0])
+        return ScreenSnapshot(pkg, isSettled(), elements, activeDialog = dialogSeen[0], viewport = selected.viewport)
     }
 
     private fun walk(

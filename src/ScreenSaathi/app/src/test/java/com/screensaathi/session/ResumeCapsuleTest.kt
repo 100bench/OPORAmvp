@@ -246,7 +246,7 @@ class ResumeCapsuleTest {
         resourceId = resourceId,
         text = text,
         className = "Button",
-        bounds = Rect(10, 20, 110, 80),
+        bounds = Rect().apply { left = 10; top = 20; right = 110; bottom = 80 },
         editable = false,
         clickable = true,
         visibleToUser = true,

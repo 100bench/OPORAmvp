@@ -7,6 +7,9 @@ import android.content.Intent
 import android.util.Log
 import com.screensaathi.ScreenReaderService
 import com.screensaathi.screen.UiTreeFixtureCodec
+import com.screensaathi.screen.ScreenElementEligibility
+import com.screensaathi.screen.ScreenSanitizer
+import com.screensaathi.screen.eligibility
 import org.json.JSONArray
 import java.io.File
 
@@ -38,7 +41,16 @@ class FixtureExportReceiver : BroadcastReceiver() {
                 temporary.delete()
             }
             resultCode = Activity.RESULT_OK
-            Log.i(TAG, "success elements=${snapshot.elements.count { !it.password }} path=files/fixtures/$name.json")
+            val eligibility = snapshot.elements.groupingBy {
+                when (val result = it.eligibility(snapshot.viewportOrLegacy)) {
+                    ScreenElementEligibility.Eligible -> "ELIGIBLE"
+                    is ScreenElementEligibility.Ineligible -> result.reason.name
+                }
+            }.eachCount()
+            // Geometry/counts only: never log labels, IDs, package names or raw nodes.
+            Log.i(TAG, "success elements=${snapshot.elements.count { !it.password }} " +
+                "viewport=${snapshot.viewport} eligibility=$eligibility " +
+                "providerElements=${ScreenSanitizer.sanitize(snapshot).elements.size} path=files/fixtures/$name.json")
         } catch (_: Exception) {
             // No exception/cause logging: JSON and accessibility errors can contain user data.
             Log.w(TAG, "failure")
