@@ -7,6 +7,51 @@ import org.junit.Test
 
 class ModalDismissResolverTest {
     @Test
+    fun `bounded dialog rejects offscreen mostly clipped and zero area close controls`() {
+        listOf(
+            testRect(10, 110, 30, 130),
+            testRect(10, 90, 30, 130),
+            testRect(10, 20, 10, 40),
+            testRect(10, 20, 30, 20),
+        ).forEach { bounds ->
+            val close = node(0, "close", "Закрыть", bounds, true, true)
+            val snapshot = dialog(close).copy(viewport = ScreenViewport(0, 0, 100, 100))
+
+            assertTrue(ModalDismissResolver.resolve(snapshot) is ModalDismissResolver.Result.ManualDismiss)
+        }
+    }
+
+    @Test
+    fun `close label and its clickable ancestor both require eligible geometry`() {
+        val viewport = ScreenViewport(0, 0, 100, 100)
+        val cases = listOf(
+            testRect(10, 70, 40, 130) to testRect(20, 110, 30, 120),
+            testRect(10, 70, 40, 130) to testRect(20, 90, 30, 120),
+            testRect(10, 70, 40, 130) to testRect(20, 80, 20, 90),
+            testRect(10, 70, 40, 150) to testRect(15, 75, 35, 95),
+        )
+        cases.forEach { (parentBounds, labelBounds) ->
+            val button = node(0, "", "", parentBounds, true, true)
+            val label = node(1, "", "×", labelBounds, false, true).copy(clickableAncestorIndex = 0)
+
+            assertTrue(ModalDismissResolver.resolve(dialog(button, label).copy(viewport = viewport))
+                is ModalDismissResolver.Result.ManualDismiss)
+        }
+    }
+
+    @Test
+    fun `eligible clipped close label retains its actual clickable ancestor`() {
+        val button = node(0, "", "", testRect(10, 60, 40, 120), true, true)
+        val label = node(1, "", "×", testRect(20, 80, 30, 95), false, true)
+            .copy(clickableAncestorIndex = 0)
+        val result = ModalDismissResolver.resolve(dialog(button, label)
+            .copy(viewport = ScreenViewport(0, 0, 100, 100)))
+
+        assertTrue(result is ModalDismissResolver.Result.CloseTarget)
+        assertSame(button, (result as ModalDismissResolver.Result.CloseTarget).element)
+    }
+
+    @Test
     fun `unique labelled close button inside dialog is selected`() {
         val close = node(0, "close_button", "Закрыть", testRect(900, 400, 1040, 540), true, true)
         val result = ModalDismissResolver.resolve(dialog(close))

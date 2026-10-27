@@ -420,11 +420,12 @@ class UniversalGuidanceLoop(
             }
             is ModalDismissResolver.Result.CloseTarget -> {
                 val close = modal.element
+                val viewport = raw.viewportOrLegacy
                 val target = ResolvedScenarioTarget(
-                    left = close.bounds.left,
-                    top = close.bounds.top,
-                    right = close.bounds.right,
-                    bottom = close.bounds.bottom,
+                    left = maxOf(close.bounds.left, viewport.left),
+                    top = maxOf(close.bounds.top, viewport.top),
+                    right = minOf(close.bounds.right, viewport.right),
+                    bottom = minOf(close.bounds.bottom, viewport.bottom),
                     fingerprint = fingerprint,
                     snapshotIdentity = snapshotIdentity,
                     resourceId = close.resourceId.takeIf(String::isNotBlank),
@@ -607,8 +608,12 @@ class UniversalGuidanceLoop(
         }
 
         val bounds = result.candidate.bounds
+        val viewport = raw.viewportOrLegacy
+        // Eligibility deliberately permits >=50% visibility. Render only the
+        // intersection, while freshness and ancestry keep the original snapshot.
         val target = ResolvedScenarioTarget(
-            bounds.left, bounds.top, bounds.right, bounds.bottom,
+            maxOf(bounds.left, viewport.left), maxOf(bounds.top, viewport.top),
+            minOf(bounds.right, viewport.right), minOf(bounds.bottom, viewport.bottom),
             raw.signature(), raw.localIdentity(),
             result.candidate.element.resourceId.takeIf(String::isNotBlank),
             plan.targetText.takeIf(String::isNotBlank),

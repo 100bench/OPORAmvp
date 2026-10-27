@@ -10,6 +10,7 @@ import com.screensaathi.sarvam.PlannerResult
 import com.screensaathi.screen.PlannerScreen
 import com.screensaathi.screen.ScreenElement
 import com.screensaathi.screen.ScreenSnapshot
+import com.screensaathi.screen.ScreenViewport
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -21,6 +22,89 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UniversalGuidanceLoopTest {
+    @Test
+    fun `unusable bounded modal close controls request manual dismissal with zero planner calls`() {
+        listOf(
+            testRect(10, 110, 30, 130),
+            testRect(10, 90, 30, 130),
+            testRect(10, 20, 10, 40),
+            testRect(10, 20, 30, 20),
+        ).forEach { bounds ->
+            val close = element(0, "close", "Закрыть", 10).copy(bounds = bounds, inDialog = true)
+            val raw = ScreenSnapshot("example.popup", true, listOf(close), activeDialog = true,
+                viewport = ScreenViewport(0, 0, 100, 100))
+            val emissions = mutableListOf<UniversalGuidanceEmission>()
+            val planner = RepeatingPlanner(answer("unused"))
+            val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+            loop.startGoal("Найти товары")
+
+            assertEquals(0, planner.calls)
+            assertEquals(ScenarioPhase.WAITING_FOR_MODAL_DISMISS, loop.session.phase)
+            assertTrue(emissions.any { it.effect is ScenarioEffect.RequestManualModalDismiss })
+            assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance || it.resolvedTarget != null })
+        }
+    }
+
+    @Test
+    fun `eligible targets emit only their visible bounds and preserve snapshot geometry`() {
+        val cases = listOf(
+            testRect(30, 80, 50, 140) to listOf(30, 80, 50, 120),
+            testRect(10, 50, 50, 90) to listOf(20, 50, 50, 90),
+            testRect(90, 50, 130, 90) to listOf(90, 50, 120, 90),
+            testRect(30, 20, 50, 60) to listOf(30, 40, 50, 60), // exactly half visible
+            testRect(30, 50, 50, 90) to listOf(30, 50, 50, 90),
+        )
+        cases.forEach { (bounds, expected) ->
+            val original = listOf(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            val raw = ScreenSnapshot("example.generic", true, listOf(
+                element(0, "target", "Поиск", 30).copy(bounds = bounds)),
+                viewport = ScreenViewport(20, 40, 120, 120))
+            val emissions = mutableListOf<UniversalGuidanceEmission>()
+            val planner = RepeatingPlanner(guide("Нажмите поиск", "target"))
+            val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+            loop.startGoal("Найти товары")
+            loop.confirmGoal() // Must validate against the original, unclipped snapshot identity.
+
+            assertEquals(1, planner.calls)
+            assertEquals(ScenarioPhase.GUIDING_STEP, loop.session.phase)
+            val target = emissions.single { it.resolvedTarget != null }.resolvedTarget!!
+            assertEquals(expected, listOf(target.left, target.top, target.right, target.bottom))
+            assertEquals(raw.signature(), target.fingerprint)
+            assertEquals("target", target.resourceId)
+            assertTrue(target.snapshotIdentity.isNotBlank())
+            assertEquals(original, raw.elements.single().bounds.let {
+                listOf(it.left, it.top, it.right, it.bottom)
+            })
+        }
+    }
+
+    @Test
+    fun `clipped modal ancestor emits visible bounds without changing ancestry or raw geometry`() {
+        val button = element(10, "container_button", "", 30).copy(
+            bounds = testRect(30, 80, 60, 140), inDialog = true)
+        val label = element(11, "cross", "×", 40).copy(
+            bounds = testRect(40, 90, 50, 110), clickable = false, inDialog = true,
+            clickableAncestorIndex = 10)
+        val raw = ScreenSnapshot("example.popup", true, listOf(button, label), activeDialog = true,
+            viewport = ScreenViewport(20, 40, 120, 120))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val planner = RepeatingPlanner(answer("unused"))
+        val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+        loop.startGoal("Найти товары")
+
+        assertEquals(0, planner.calls)
+        assertEquals(ScenarioPhase.WAITING_FOR_MODAL_DISMISS, loop.session.phase)
+        val target = emissions.single { it.resolvedTarget != null }.resolvedTarget!!
+        assertEquals(listOf(30, 80, 60, 120), listOf(target.left, target.top, target.right, target.bottom))
+        assertEquals("container_button", target.resourceId)
+        assertEquals(raw.signature(), target.fingerprint)
+        assertEquals(140, button.bounds.bottom)
+        assertEquals(10, label.clickableAncestorIndex)
+    }
+
     @Test fun `shared id child labels keep clickable ancestors while matching exact label`() {
         val origin = element(10, "origin_container", "", 10).copy(
             bounds = testRect(10, 10, 180, 120))

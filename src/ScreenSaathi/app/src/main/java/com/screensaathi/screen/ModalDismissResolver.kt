@@ -13,7 +13,9 @@ object ModalDismissResolver {
 
     fun resolve(snapshot: ScreenSnapshot): Result {
         if (!snapshot.activeDialog) return Result.NotModal
-        val descendants = snapshot.elements.filter { it.inDialog && it.visibleToUser && it.enabled && !it.password }
+        val descendants = snapshot.elements.filter {
+            it.inDialog && it.eligibility(snapshot.viewportOrLegacy) == ScreenElementEligibility.Eligible
+        }
         val buttons = descendants.filter { it.clickable && !it.editable }
         val candidates = linkedSetOf<ScreenElement>()
 
