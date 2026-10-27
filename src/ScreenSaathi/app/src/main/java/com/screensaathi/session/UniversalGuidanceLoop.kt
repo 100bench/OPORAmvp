@@ -30,13 +30,21 @@ data class UniversalGuidanceEmission(
     val resolvedTarget: ResolvedScenarioTarget? = null,
     val latency: ScenarioLatencyTrace? = null,
     private val delivery: (() -> Unit) -> Unit = { it() },
+    val terminalPresentation: Boolean = false,
 ) {
     fun dispatch(
         postToUi: (() -> Unit) -> Unit,
         isActive: () -> Boolean = { true },
+        isTurnCurrent: () -> Boolean = { true },
         consume: (UniversalGuidanceEmission) -> Unit,
     ) {
-        val deliver = { if (isActive()) deliverIfCurrent { consume(this) } }
+        // Stop deactivates the controller immediately, but its final card must
+        // still reach main. Turn and generation/state ownership remain required.
+        val deliver = {
+            if (isTurnCurrent() && (isActive() || terminalPresentation)) {
+                deliverIfCurrent { consume(this) }
+            }
+        }
         when (effect) {
             // These must complete before a caller deactivates/replaces the
             // session. In particular, never lose Stop's monitor/capsule cleanup.
@@ -247,7 +255,7 @@ class UniversalGuidanceLoop(
 
     fun ttsFailed() = dispatch(ScenarioEvent.TtsFailed, generation.get())
 
-    fun stop() {
+    fun stop(deliverIdleAfterDeactivation: Boolean = false) {
         val token: Long
         val transition = synchronized(lock) {
             token = generation.incrementAndGet()
@@ -258,7 +266,10 @@ class UniversalGuidanceLoop(
             inFlightAttempt = null
             next
         }
-        transition.effects.forEach { execute(it, token, expectedState = transition.session) }
+        transition.effects.forEach {
+            execute(it, token, expectedState = transition.session,
+                terminalPresentation = deliverIdleAfterDeactivation && it == ScenarioEffect.ShowIdle)
+        }
     }
 
     private fun dispatch(
@@ -296,6 +307,7 @@ class UniversalGuidanceLoop(
         staleReplans: Int = 0,
         expectedAttempt: PlanningAttempt? = null,
         expectedState: ScenarioSession? = null,
+        terminalPresentation: Boolean = false,
     ) {
         if (token != generation.get()) return
         if (expectedAttempt != null && synchronized(lock) { inFlightAttempt !== expectedAttempt }) return
@@ -317,6 +329,7 @@ class UniversalGuidanceLoop(
                         delivery = { action -> synchronized(lock) {
                             if (token == generation.get() && state === owner) action()
                         } },
+                        terminalPresentation = terminalPresentation,
                     )
                 }
                 emit(emission)

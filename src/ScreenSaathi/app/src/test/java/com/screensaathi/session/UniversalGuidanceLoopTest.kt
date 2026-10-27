@@ -2,6 +2,8 @@ package com.screensaathi.session
 
 import android.graphics.Rect
 import com.screensaathi.sarvam.GuidancePlanner
+import com.screensaathi.sarvam.AudioPlayer
+import com.screensaathi.sarvam.AudioPlayback
 import com.screensaathi.sarvam.PlannerFailureKind
 import com.screensaathi.sarvam.PlannerOutcome
 import com.screensaathi.sarvam.PlannerResult
@@ -19,6 +21,132 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UniversalGuidanceLoopTest {
+
+    @Test
+    fun `replacement stop does not overwrite a fresh recording after deactivation`() {
+        val ui = mutableListOf<() -> Unit>()
+        var active = true
+        var idleRenders = 0
+        val loop = UniversalGuidanceLoop(RepeatingPlanner(answer("Ответ")),
+            { screen("app", "target", "Куда", 10) }, clock(), { emission ->
+                emission.dispatch(ui::add, isActive = { active }) {
+                    if (it.effect == ScenarioEffect.ShowIdle) idleRenders++
+                }
+            })
+        loop.startGoal("Вопрос")
+        loop.stop() // Same operation used when replacing the goal with recording.
+        active = false
+        ui.forEach { it() }
+        assertEquals(0, idleRenders)
+    }
+
+    @Test
+    fun `speech failure visible command retains useful instruction and highlight with retry controls`() {
+        var visible: com.screensaathi.overlay.OverlayCommand? = null
+        var useful: String? = null
+        val loop = UniversalGuidanceLoop(RepeatingPlanner(guide("Нажмите поле поиска", resourceId = "target")),
+            { screen("app", "target", "Куда", 10) }, clock(), { emission ->
+                emission.dispatch({ it() }) { delivered ->
+                    when (val effect = delivered.effect) {
+                        is ScenarioEffect.ShowGuidance -> {
+                            val target = delivered.resolvedTarget!!
+                            useful = "Шаг 1. ${effect.guidance.instruction}"
+                            visible = com.screensaathi.overlay.OverlayCommand(
+                                com.screensaathi.overlay.PillState.GUIDING, expanded = true,
+                                instruction = useful,
+                                highlight = com.screensaathi.overlay.HighlightBounds(
+                                    target.left, target.top, target.right, target.bottom),
+                            )
+                        }
+                        is ScenarioEffect.ShowDecision -> visible = scenarioDecisionCommand(
+                            effect, "ru-IN", useful, visible?.highlight)
+                        else -> Unit
+                    }
+                }
+            })
+        loop.startGoal("Найти поле")
+        loop.confirmGoal()
+        val before = visible!!
+        repeat(2) { loop.ttsFailed() }
+        val failed = visible!!
+        assertTrue(failed.instruction!!.startsWith(before.instruction!!))
+        assertTrue(failed.instruction!!.contains("Не удалось озвучить"))
+        assertEquals(1, Regex("Шаг 1").findAll(failed.instruction!!).count())
+        assertEquals(before.highlight, failed.highlight)
+        assertEquals(com.screensaathi.overlay.DecisionButtons("Повторить", "Продолжить"), failed.decisionButtons)
+    }
+
+    @Test
+    fun `screen invalidation cannot complete between playback lease validation and start`() {
+        val current = AtomicReference(screen("app", "target", "Куда", 10))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(RepeatingPlanner(guide("Нажмите поле", resourceId = "target")),
+            current::get, clock(), emissions::add)
+        loop.startGoal("Найти поле")
+        loop.confirmGoal()
+        val speech = emissions.single { it.effect is ScenarioEffect.SpeakText }
+        val starting = CountDownLatch(1)
+        val proceed = CountDownLatch(1)
+        val invalidated = CountDownLatch(1)
+        var prepared: () -> Unit = {}
+        val clip = java.io.File.createTempFile("opora-audio-test", ".wav")
+        val backend = object : AudioPlayback {
+            override fun prepare(path: String, onPrepared: () -> Unit, onDone: () -> Unit) {
+                prepared = onPrepared
+            }
+            override fun start() {
+                starting.countDown()
+                check(proceed.await(2, TimeUnit.SECONDS))
+            }
+            override fun release() = Unit
+        }
+        val player = AudioPlayer(clip) { backend }
+        player.play(byteArrayOf(1), {}, {}, withCurrent = speech::deliverIfCurrent)
+        val playback = Thread { prepared() }.apply { start() }
+        var change: Thread? = null
+        try {
+            assertTrue(starting.await(1, TimeUnit.SECONDS))
+            change = Thread {
+                current.set(screen("app", "target", "Другое", 100))
+                loop.observeScreen(current.get())
+                invalidated.countDown()
+            }.apply { start() }
+            assertFalse("invalidation must serialize with actual start", invalidated.await(100, TimeUnit.MILLISECONDS))
+        } finally {
+            proceed.countDown()
+            playback.join(2000)
+            change?.join(2000)
+            player.stop()
+            clip.delete()
+        }
+        assertFalse(speech.isCurrent())
+    }
+
+    @Test
+    fun `decision Stop renders idle after controller deactivation but cannot overwrite a replacement`() {
+        listOf(false, true).forEach { replace ->
+            val ui = mutableListOf<() -> Unit>()
+            var active = true
+            var visible: ScenarioEffect? = null
+            val loop = UniversalGuidanceLoop(RepeatingPlanner(guide("Нажмите поле", resourceId = "target")),
+                { screen("app", "target", "Куда", 10) }, clock(), { emission ->
+                    emission.dispatch(ui::add, isActive = { active }) { visible = it.effect }
+                })
+            loop.startGoal("Найти поле")
+            ui.toList().forEach { it() }
+            ui.clear()
+            assertTrue(visible is ScenarioEffect.ConfirmGoal)
+            loop.stop(deliverIdleAfterDeactivation = true)
+            active = false // Same ordering as handleScenarioChoice(STOP/CANCEL).
+            if (replace) {
+                active = true
+                loop.startGoal("Другая цель")
+            }
+            ui.toList().forEach { it() }
+            if (replace) assertTrue(visible is ScenarioEffect.ConfirmGoal)
+            else assertEquals(ScenarioEffect.ShowIdle, visible)
+        }
+    }
 
     @Test
     fun `same generation screen change invalidates queued guidance and speech delivery`() {

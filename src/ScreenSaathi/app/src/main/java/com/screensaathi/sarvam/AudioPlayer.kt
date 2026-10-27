@@ -10,47 +10,83 @@ import java.io.File
  * (MediaPlayer needs a source, not a byte array). onDone fires when playback
  * finishes or fails, so the caller can flip the pill out of the speaking state.
  */
-class AudioPlayer(private val context: Context) {
+class AudioPlayer internal constructor(
+    private val clip: File,
+    private val createPlayback: () -> AudioPlayback,
+) {
+    constructor(context: Context) : this(File(context.cacheDir, "saathi_tts.wav"), ::AndroidAudioPlayback)
 
-    private var player: MediaPlayer? = null
-    private val clip = File(context.cacheDir, "saathi_tts.wav")
+    private val lock = Any()
+    private var player: AudioPlayback? = null
 
-    fun play(wavBytes: ByteArray, onStart: () -> Unit, onDone: () -> Unit) {
-        stop()
+    fun play(wavBytes: ByteArray, onStart: () -> Unit, onDone: () -> Unit,
+        withCurrent: (() -> Unit) -> Unit = { it() },
+    ) {
+        var installed: AudioPlayback? = null
         try {
-            val f = clip
-            f.writeBytes(wavBytes)
-            val mp = MediaPlayer()
-            player = mp
-            mp.setDataSource(f.absolutePath)
-            mp.setOnPreparedListener {
-                onStart()
-                it.start()
+            // Acquire the session/turn lease before our lock, including on the
+            // prepared boundary below. Stop never acquires the session lease.
+            withCurrent {
+                synchronized(lock) {
+                    stopLocked()
+                    val mp = createPlayback()
+                    installed = mp
+                    player = mp
+                    clip.writeBytes(wavBytes)
+                }
             }
-            mp.setOnCompletionListener {
-                stop()
-                onDone()
-            }
-            mp.setOnErrorListener { _, what, extra ->
-                Log.w(TAG, "MediaPlayer error $what/$extra")
-                stop()
-                onDone()
-                true
-            }
-            mp.prepareAsync()
-        } catch (e: Exception) {
-            Log.w(TAG, "play failed: ${e.message}")
-            onDone()
+            val mp = installed ?: return
+            mp.prepare(clip.absolutePath,
+                onPrepared = { startPrepared(mp, withCurrent, onStart, onDone) },
+                onDone = { if (stopIfOwned(mp)) onDone() },
+            )
+        } catch (_: Exception) {
+            Log.w(TAG, "playback preparation failed")
+            val mp = installed
+            if (mp == null) withCurrent(onDone)
+            else if (stopIfOwned(mp)) onDone()
         }
     }
 
-    fun stop() {
+    private fun startPrepared(
+        mp: AudioPlayback,
+        withCurrent: (() -> Unit) -> Unit,
+        onStart: () -> Unit,
+        onDone: () -> Unit,
+    ) {
+        var started = false
         try {
-            player?.let { if (it.isPlaying) it.stop(); it.release() }
+            withCurrent {
+                synchronized(lock) {
+                    if (player === mp) {
+                        // Start is inside both the freshness lease and the
+                        // playback lock. Stop cannot complete in a check/start gap.
+                        mp.start()
+                        started = true
+                        onStart()
+                    }
+                }
+            }
         } catch (_: Exception) {
+            Log.w(TAG, "playback start failed")
+            if (stopIfOwned(mp)) onDone()
         } finally {
-            player = null
+            if (!started) stopIfOwned(mp)
         }
+    }
+
+    fun stop() = synchronized(lock) { stopLocked() }
+
+    private fun stopIfOwned(mp: AudioPlayback): Boolean = synchronized(lock) {
+        if (player !== mp) return@synchronized false
+        stopLocked()
+        true
+    }
+
+    private fun stopLocked() {
+        val previous = player
+        player = null
+        runCatching { previous?.release() }
         // The input WAV (WavRecorder) is deleted right after its STT call;
         // this one wasn't, so a spoken clip sat in cache indefinitely between
         // turns. Same rule should apply to both temp files.
@@ -58,4 +94,28 @@ class AudioPlayer(private val context: Context) {
     }
 
     companion object { private const val TAG = "AudioPlayer" }
+}
+
+/** Narrow async media seam; ownership and start/stop policy live in AudioPlayer. */
+internal interface AudioPlayback {
+    fun prepare(path: String, onPrepared: () -> Unit, onDone: () -> Unit)
+    fun start()
+    fun release()
+}
+
+private class AndroidAudioPlayback : AudioPlayback {
+    private val player = MediaPlayer()
+    override fun prepare(path: String, onPrepared: () -> Unit, onDone: () -> Unit) {
+        player.setDataSource(path)
+        player.setOnPreparedListener { onPrepared() }
+        player.setOnCompletionListener { onDone() }
+        player.setOnErrorListener { _, what, extra ->
+            Log.w("AudioPlayer", "MediaPlayer error $what/$extra")
+            onDone()
+            true
+        }
+        player.prepareAsync()
+    }
+    override fun start() = player.start()
+    override fun release() = player.release()
 }

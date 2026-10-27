@@ -126,7 +126,8 @@ class SessionController(
                 val turn = universalTurn
                 emission.dispatch(
                     postToUi = { main.post(it) },
-                    isActive = { universalActive && isCurrent(turn) },
+                    isActive = { universalActive },
+                    isTurnCurrent = { isCurrent(turn) },
                     consume = ::handleUniversalEmission,
                 )
             },
@@ -161,13 +162,14 @@ class SessionController(
      * finds itself outdated renders nothing.
      */
     private val turnId = AtomicInteger(0)
+    private val turnLock = Any()
 
-    private fun newTurn(): Int {
+    private fun newTurn(): Int = synchronized(turnLock) {
         // Diagnostics belong to one turn. Without this the previous turn's note
         // ("stopped by user at step amount") sits under the next turn's
         // reading and describes something that is no longer happening.
         debug = VoiceDebug()
-        return turnId.incrementAndGet()
+        turnId.incrementAndGet()
     }
     private fun isCurrent(turn: Int): Boolean = turnId.get() == turn
 
@@ -191,6 +193,7 @@ class SessionController(
      * user is being pointed at.
      */
     @Volatile private var currentHighlight: HighlightBounds? = null
+    private var currentUsefulInstruction: String? = null
 
     /** One user goal can span several app screens; this is its visible step. */
     @Volatile private var guidanceStepNumber = 1
@@ -524,6 +527,7 @@ class SessionController(
         universalActive = true
         universalTurn = turn
         engine = null
+        currentUsefulInstruction = null
         currentHighlight = null
         lastHighlightQuery = null
         lastHighlightScreenSig = ""
@@ -552,7 +556,7 @@ class SessionController(
 
     private fun handleUniversalEmission(emission: UniversalGuidanceEmission) {
         val turn = universalTurn
-        if (!universalActive || !isCurrent(turn)) return
+        if ((!universalActive && !emission.terminalPresentation) || !isCurrent(turn)) return
         when (val effect = emission.effect) {
             ScenarioEffect.BeginRecognition -> startListening(replacingUniversal = false)
             ScenarioEffect.AnalyzeCurrentScreen,
@@ -686,6 +690,7 @@ class SessionController(
             }
 
             is ScenarioEffect.ShowAnswer -> {
+                currentUsefulInstruction = effect.instruction
                 currentHighlight = null
                 currentChoices = emptyList()
                 renderIfCurrent(
@@ -721,6 +726,7 @@ class SessionController(
                 } else {
                     "Шаг ${universalLoop.session.stepNumber}. $instruction"
                 }
+                currentUsefulInstruction = numbered
                 renderIfCurrent(
                     turn,
                     OverlayCommand(
@@ -735,7 +741,8 @@ class SessionController(
 
             is ScenarioEffect.SpeakText -> speech.post {
                 // The corresponding visual effect has already run on main.
-                speak(Spoken(effect.text, lastLanguage), turn, emission.latency, emission::isCurrent)
+                speak(Spoken(effect.text, lastLanguage), turn, emission.latency,
+                    emission::isCurrent, emission::deliverIfCurrent)
             }
 
             is ScenarioEffect.ShowDecision -> showScenarioDecision(turn, effect)
@@ -800,47 +807,11 @@ class SessionController(
     }
 
     private fun showScenarioDecision(turn: Int, effect: ScenarioEffect.ShowDecision) {
-        val (message, buttons) = when (effect.notice) {
-            ScenarioNotice.VERIFY_RECOGNITION -> {
-                val heard = effect.recognizedGoal?.takeIf(String::isNotBlank)
-                    ?.let { "Я услышал: «$it». Всё верно?" }
-                    ?: "Не удалось уверенно разобрать цель. Повторить?"
-                heard to if (effect.choices.firstOrNull() == ScenarioChoice.REPEAT_RECOGNITION) {
-                    DecisionButtons.RETRY_OR_STOP
-                } else {
-                    DecisionButtons.VERIFY_OR_REPEAT
-                }
-            }
-            ScenarioNotice.AUTHENTICATION ->
-                "Введите пароль, код или биометрию самостоятельно, затем нажмите «Продолжить»." to
-                    DecisionButtons.CONTINUE_OR_STOP
-            ScenarioNotice.NO_NETWORK ->
-                "Нет связи с AI. Проверьте VPN и подключение, затем повторите." to
-                    DecisionButtons.RETRY_OR_STOP
-            ScenarioNotice.TTS_UNAVAILABLE ->
-                "Не удалось озвучить подсказку. Текст остаётся на экране." to
-                    DecisionButtons("Повторить", "Продолжить")
-            ScenarioNotice.SAFE_HANDOFF ->
-                "Дальше требуется ваше личное подтверждение." to DecisionButtons.CONTINUE_OR_STOP
-        }
+        val command = scenarioDecisionCommand(effect, lastLanguage, currentUsefulInstruction, currentHighlight)
         pendingScenarioPrimary = effect.choices.getOrNull(0)
         pendingScenarioSecondary = effect.choices.getOrNull(1)
-        currentDecisionButtons = buttons
-        renderIfCurrent(
-            turn,
-            OverlayCommand(
-                PillState.GUIDING,
-                expanded = true,
-                instruction = message,
-                language = lastLanguage,
-                highlight = if (effect.notice == ScenarioNotice.TTS_UNAVAILABLE) {
-                    currentHighlight
-                } else {
-                    null
-                },
-                decisionButtons = buttons,
-            ),
-        )
+        currentDecisionButtons = command.decisionButtons
+        renderIfCurrent(turn, command)
     }
 
     private fun showRecoverableFailure(
@@ -883,7 +854,7 @@ class SessionController(
             ScenarioChoice.CANCEL,
             ScenarioChoice.STOP,
             -> {
-                universalLoop.stop()
+                universalLoop.stop(deliverIdleAfterDeactivation = true)
                 universalActive = false
             }
             ScenarioChoice.CONTINUE -> universalLoop.continueAfterAuth()
@@ -2443,6 +2414,7 @@ class SessionController(
         turn: Int,
         latency: ScenarioLatencyTrace? = null,
         stillCurrent: () -> Boolean = { true },
+        withCurrent: (() -> Unit) -> Unit = { it() },
     ) {
         if (!isCurrent(turn) || stopped || !stillCurrent()) return
         currentScreenSafetyAssessment()
@@ -2477,6 +2449,13 @@ class SessionController(
                     instruction = spoken.text, language = spoken.language,
                     highlight = currentHighlight, choices = currentChoices,
                     decisionButtons = currentDecisionButtons), stillCurrent)
+            },
+            withCurrent = { action ->
+                withCurrent {
+                    synchronized(turnLock) {
+                        if (isCurrent(turn) && !stopped) action()
+                    }
+                }
             },
         )
     }
