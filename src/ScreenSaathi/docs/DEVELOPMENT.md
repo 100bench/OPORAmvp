@@ -90,9 +90,8 @@ planner fake, target resolver and scenario reducer:
 
 To add a regression fixture:
 
-1. Reproduce the screen on a development device and inspect the Accessibility
-   tree locally with `com.screensaathi.DUMP_SCREEN` or Android tooling. Do not
-   take or commit a screenshot.
+1. Reproduce the screen on a development device and use the sanitized debug
+   capture below. Never persist or print a raw Accessibility tree or take a screenshot.
 2. Create a new, independent JSON sample containing only the minimum structural
    roles, synthetic labels, resource ids, state flags and approximate synthetic
    bounds required to reproduce the behavior.
@@ -111,6 +110,59 @@ Canvas/OpenGL surfaces, secure windows and poorly semantic WebView or Compose
 trees may expose no reliable control. The tree-only MVP does not guess and has
 no screenshot fallback: it asks the user to scroll/continue manually or enters
 safe handoff when local risk evidence is present.
+
+### Sanitized captures from a physical device
+
+Build/install the debug APK and keep the Accessibility service bound. From
+`src/ScreenSaathi`, capture one independent screen (Python 3 and adb required):
+
+```bash
+./scripts/capture_ui_fixture.sh search-empty \
+  app/src/test/resources/ui_trees/real/search-empty.json \
+  'Поиск' 'Продолжить'
+```
+
+Every optional argument is an explicitly reviewed **static**, non-editable UI
+label. Supply none by default. Never approve user/account/order content,
+addresses, names, phone numbers, email, VINs, plate numbers, OTPs, passwords,
+tokens, bank/payment data or other personal data, even if shown as static text.
+Never capture or store audio. No screenshots, OCR or automatic actions are used.
+Keep auth, banking, payment and final-action handling local; this tool never
+calls the planner, STT or TTS, and never authorizes bypassing those boundaries.
+
+The debug-only `FixtureExportReceiver` requires the shell/system DUMP permission.
+It sanitizes entirely in memory before opening an output file under the app's
+private `files/fixtures/`. Password nodes are omitted. Editable `text`, `hintText`
+and `contentDescription` are always empty, including when explicitly approved.
+All other text/hints/descriptions become `[REDACTED]` unless their complete value
+is caller-approved; approved labels still pass through phone/email/long-number/
+OTP redaction. Bounds, roles, flags, resource IDs and retained clickable ancestry
+are preserved for local replay; structural strings also pass through pattern
+redaction. Review structural identifiers as well as approved labels before
+staging: pattern matching cannot identify every personal value or dynamic ID.
+The receiver logs only status, count and a safe private relative path; failures
+never log the tree, arguments or exception content. The receiver and manifest
+entry are absent from release builds.
+
+The helper validates names (`[A-Za-z0-9][A-Za-z0-9_-]{0,63}`), removes stale
+captures, checks broadcast success, then reads only the sanitized private file
+with `adb exec-out run-as com.screensaathi`. Destinations must be `.json` files
+inside `app/src/test/resources/ui_trees/real/` (resolved paths, including symlinks).
+`--dry-run` permits any destination for validation but performs **no adb calls or
+file writes**, for example:
+
+```bash
+./scripts/capture_ui_fixture.sh --dry-run search-empty /tmp/search-empty.json
+./gradlew testDebugUnitTest --tests 'com.screensaathi.screen.UiTreeFixtureTest'
+```
+
+Review the sanitized file before committing it; never attach raw dumps to issues
+or reports. Remove the debug private file with
+`adb shell run-as com.screensaathi rm files/fixtures/search-empty.json` when done.
+The versioned `sanitized_accessibility` schema is for local fixture replay only;
+the decoder rejects raw/legacy schemas and unknown fields. A null viewport is
+an explicit legacy capture until the reader supplies exact application-window
+bounds; do not infer live bounds from the union of nodes.
 
 ## Install and run on a device
 

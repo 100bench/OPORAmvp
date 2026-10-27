@@ -36,6 +36,8 @@ data class ScreenSnapshot(
     val elements: List<ScreenElement>,
     /** True only for a visible dialog node in the current Accessibility tree. */
     val activeDialog: Boolean = false,
+    /** Null only for legacy captures until the live reader supplies window bounds. */
+    val viewport: ScreenViewport? = null,
 ) {
     /** Live bounds for a step's resource_id, or null if not currently on screen. */
     fun boundsForResourceId(resourceId: String): Rect? {
