@@ -17,5 +17,13 @@
                 <action android:name="com.screensaathi.SUBMIT_TEXT_PROBE" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".debug.SemanticProbeReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.screensaathi.PROBE_UI_SEMANTICS" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

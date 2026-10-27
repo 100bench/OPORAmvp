@@ -12,6 +12,32 @@
     "max_planner_calls": 1
   },
   {
+    "file": "yandex_go/taxi_start_semantic.json",
+    "capture_kind": "sanitized_real",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "",
+    "target_text": "Куда едем?",
+    "expected_target_resource_id": "fixture_resource_11",
+    "target_index": 45,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  },
+  {
+    "file": "yandex_go/destination_empty_semantic.json",
+    "capture_kind": "sanitized_real",
+    "disposition": "ALLOW",
+    "resolver": "Found",
+    "target_resource_id": "",
+    "target_text": "Куда поедете?",
+    "expected_target_resource_id": "fixture_resource_10",
+    "target_index": 45,
+    "phase": "GUIDING_STEP",
+    "recovery": "guidance",
+    "max_planner_calls": 1
+  },
+  {
     "file": "yandex_go/destination_empty_keyboard.json",
     "capture_kind": "sanitized_real",
     "disposition": "ALLOW",

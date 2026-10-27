@@ -107,6 +107,19 @@ It proves structural capture and honest `NotFound`/local recovery, not successfu
 taxi entry or an inaccessible target fix. The exact visible screen is unconfirmed;
 no further navigation was attempted.
 
+A later authorized physical Taxi start on 2026-10-27 UTC (2026-10-28 device local)
+provides `taxi_start_semantic.json`: 91 nodes with only the approved generic labels
+`Куда едем?` and `Назад`. The exact destination label resolves to actionable
+index 45 (`fixture_resource_11`), bounds `[45,1515,1031,1673]`; a second label
+has the same clickable ancestor. Tapping its tree-derived center opened the
+empty destination field. `destination_empty_semantic.json` captures that next
+screen (107 nodes), retaining only approved static labels/hints; the empty
+`Куда поедете?` field is index 45, bounds `[187,422,806,480]`.
+Both rows replay as `GUIDING_STEP` through the production local loop. This closes
+the earlier structural-only Taxi-entry evidence gap. It does not establish a
+complete physical Taxi route: public test input `Red Square` was entered later,
+while result selection and final-order handoff still require separate evidence.
+
 All external IDs/classes are opaque aliases, not production identifiers. Aliasing
 preserves within-fixture equality and distinctness but removes ID-based safety
 semantics: real replay alone cannot prove handling of `source_pin`/`pin_slot`.
@@ -116,7 +129,7 @@ The only exception is an explicitly approved static hint of a proven-empty
 editable; phone/email/OTP/long-number redaction still applies. Replay injects a
 synthetic current value and checks it never reaches the planner projection.
 
-Missing physical evidence remains explicit: taxi entry/final-order, Auto.ru sell
+Missing physical evidence remains explicit: taxi final-order, Auto.ru sell
 entry/plate/VIN/later form/final publication, popup close/manual-dismiss, auth and
 the originally observed bottom navigation duplicate at viewport boundary 2153/2157.
 The current real destination tree does not reproduce that boundary mismatch.

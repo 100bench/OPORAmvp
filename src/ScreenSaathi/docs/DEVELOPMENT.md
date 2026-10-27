@@ -377,3 +377,24 @@ to reset their state.
    attach the APK and its checksum.
 6. Confirm from a **fresh clone** (not the working directory) that the same
    commit builds and the release asset downloads and installs correctly.
+
+### Debug semantic navigation probe
+
+The debug-only, DUMP-protected `SemanticProbeReceiver` returns an in-memory
+closed-vocabulary projection; it never creates a file or logs a tree:
+
+```bash
+adb shell am broadcast -n com.screensaathi/.debug.SemanticProbeReceiver \
+  -a com.screensaathi.PROBE_UI_SEMANTICS
+```
+
+Its JSON contains fixed token IDs, exact/phrase status, numeric indices/bounds,
+flags and a local safety category. It never emits raw labels, IDs, classes,
+packages or editable values; only proven-empty editable hints can match. The
+vocabulary includes the explicitly authorized public test place Red Square /
+Красная площадь; surrounding address text never survives. Local auth/payment/
+final-action classification suppresses all target geometry. The exact known
+own-overlay `Начать` button can emit `ASSISTANT_START` only with the own package,
+expected view ID, exact static text and eligible bounds. No action is performed
+by the probe. This debug utility does not authorize coordinate guessing, personal
+input or final order confirmation, and is absent from release builds.
