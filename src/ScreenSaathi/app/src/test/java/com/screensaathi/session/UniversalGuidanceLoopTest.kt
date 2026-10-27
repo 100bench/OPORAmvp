@@ -21,6 +21,57 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UniversalGuidanceLoopTest {
+    @Test fun `shared id child labels keep clickable ancestors while matching exact label`() {
+        val origin = element(10, "origin_container", "", 10).copy(
+            bounds = testRect(10, 10, 180, 120))
+        val destination = element(11, "destination_container", "", 220).copy(
+            bounds = testRect(220, 10, 400, 120))
+        val labels = listOf(
+            element(0, "label", "Откуда", 20).copy(className = "TextView", clickable = false,
+                clickableAncestorIndex = 10),
+            element(1, "label", "Куда", 240).copy(className = "TextView", clickable = false,
+                clickableAncestorIndex = 11),
+        )
+        val raw = ScreenSnapshot("example.generic", true, labels + listOf(origin, destination,
+            element(12, "unrelated", "Куда", 500)))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val planner = RepeatingPlanner(guide("Нажмите поле", "label", "Куда"))
+        val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+        loop.startGoal("Найти поле")
+        loop.confirmGoal()
+
+        assertEquals(1, planner.calls)
+        assertEquals(ScenarioPhase.GUIDING_STEP, loop.session.phase)
+        val target = emissions.single { it.resolvedTarget != null }.resolvedTarget!!
+        assertEquals("destination_container", target.resourceId)
+        assertEquals(listOf(220, 10, 400, 120), listOf(target.left, target.top, target.right, target.bottom))
+        assertEquals(1, emissions.count { it.effect is ScenarioEffect.ShowGuidance })
+    }
+
+    @Test fun `shared id exact label keeps other id fields for spatial normalization`() {
+        val raw = ScreenSnapshot("example.generic", true, listOf(
+            element(0, "label", "Откуда", 20).copy(className = "TextView", clickable = false,
+                bounds = testRect(20, 20, 100, 40)),
+            element(1, "label", "Куда", 240).copy(className = "TextView", clickable = false,
+                bounds = testRect(240, 20, 320, 40)),
+            element(10, "origin_field", "", 10, editable = true).copy(bounds = testRect(10, 60, 180, 120)),
+            element(11, "destination_field", "", 220, editable = true).copy(bounds = testRect(220, 60, 400, 120)),
+        ))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val planner = RepeatingPlanner(guide("Нажмите поле", "label", "Куда"))
+        val loop = UniversalGuidanceLoop(planner, { raw }, clock(), emissions::add)
+
+        loop.startGoal("Найти поле")
+        loop.confirmGoal()
+
+        assertEquals(1, planner.calls)
+        assertEquals(ScenarioPhase.GUIDING_STEP, loop.session.phase)
+        val target = emissions.single { it.resolvedTarget != null }.resolvedTarget!!
+        assertEquals("destination_field", target.resourceId)
+        assertEquals(listOf(220, 60, 400, 120), listOf(target.left, target.top, target.right, target.bottom))
+    }
+
     @Test fun `shared id intersects exact safe label without trusting planner index or other ids`() {
         val first = element(0, "shared", "", 10, editable = true, hint = "Откуда")
         val second = element(1, "shared", "private value", 200, editable = true, hint = "Куда")

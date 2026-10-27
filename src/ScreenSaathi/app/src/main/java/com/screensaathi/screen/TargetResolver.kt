@@ -68,10 +68,11 @@ object TargetResolver {
             .map { Candidate(it, SCORE_EXACT_ID, "exact_id") },
     )
 
-    /** Planner labels must be copied exactly, unlike natural-language queries. */
-    fun resolveLabel(label: String, snapshot: ScreenSnapshot): Result = rank(
+    /** Restrict semantic matches only; normalization still needs the complete tree. */
+    fun resolveLabel(label: String, snapshot: ScreenSnapshot, matchingResourceId: String? = null): Result = rank(
         label, snapshot, snapshot.elements
-            .filter { label.isNotBlank() && normalize(it.text) == normalize(label) }
+            .filter { label.isNotBlank() && normalize(it.text) == normalize(label) &&
+                (matchingResourceId == null || it.resourceId == matchingResourceId) }
             .map { Candidate(it, SCORE_EXACT_TEXT, "exact_text") },
     )
 

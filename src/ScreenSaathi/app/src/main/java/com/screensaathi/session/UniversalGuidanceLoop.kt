@@ -649,17 +649,16 @@ class UniversalGuidanceLoop(
             }) return TargetResolver.Result.NotFound(text)
         // Shared IDs need an exact safe label inside that same ID's candidates.
         // A matching label elsewhere and the provider's bare index cannot break a tie.
-        val candidates = if (idResult is TargetResolver.Result.Ambiguous) {
-            raw.elements.filter { it.resourceId == plan.targetResourceId }
-        } else raw.elements
-        val grounded = raw.copy(elements = candidates.map { element ->
+        // Keep ancestors, adjacent fields and intervening labels available to normalization.
+        val grounded = raw.copy(elements = raw.elements.map { element ->
             val safe = labelsByIndex[element.index]
             val label = listOfNotNull(safe?.label, safe?.description)
                 .firstOrNull { it.trim().equals(text.trim(), ignoreCase = true) }
                 ?: safe?.label.orEmpty()
             element.copy(text = label, hintText = "", contentDescription = "")
         })
-        return TargetResolver.resolveLabel(text, grounded)
+        return TargetResolver.resolveLabel(text, grounded,
+            matchingResourceId = plan.targetResourceId.takeIf { idResult is TargetResolver.Result.Ambiguous })
     }
 
     private fun TargetResolver.Result.toTargetIssue(): ScenarioTargetIssue = when (this) {
