@@ -1,7 +1,10 @@
 package com.screensaathi.session
 
+import android.util.Log
 import com.screensaathi.screen.ScreenElement
+import com.screensaathi.screen.ScreenElementEligibility
 import com.screensaathi.screen.ScreenSnapshot
+import com.screensaathi.screen.visibilityEligibility
 import java.util.Locale
 
 enum class ScreenDisposition {
@@ -18,11 +21,25 @@ enum class ScreenRiskCategory {
     BANKING,
 }
 
+enum class AuthenticationEvidence {
+    PASSWORD_NODE, PASSWORD_INPUT_TYPE, OTP_OR_SMS_TEXT, PIN_INPUT_CONTEXT,
+    PASSWORD_TEXT, BIOMETRIC_TEXT,
+}
+
+/** Only fixed structural roles are retained; external IDs/classes may contain personal data. */
+data class ScreenSafetyDiagnostic(
+    val category: ScreenRiskCategory,
+    val authenticationEvidence: AuthenticationEvidence?,
+    val packageName: String,
+    val role: String,
+)
+
 /** A classification only: it can never retain or serialize the source tree. */
 data class ScreenSafetyAssessment(
     val disposition: ScreenDisposition,
     val category: ScreenRiskCategory,
     val explanation: String,
+    val authenticationEvidence: AuthenticationEvidence? = null,
 )
 
 /**
@@ -31,42 +48,50 @@ data class ScreenSafetyAssessment(
  * screen sequence or guidance logic belongs here.
  */
 object ScreenSafetyGate {
-    fun assess(snapshot: ScreenSnapshot, appLabel: String? = null): ScreenSafetyAssessment {
+    fun assess(
+        snapshot: ScreenSnapshot,
+        appLabel: String? = null,
+        diagnosticSink: (ScreenSafetyDiagnostic) -> Unit = { Log.d("ScreenSafetyGate", it.toString()) },
+    ): ScreenSafetyAssessment {
+        fun blocked(assessment: ScreenSafetyAssessment, node: ScreenElement? = null): ScreenSafetyAssessment {
+            diagnosticSink(ScreenSafetyDiagnostic(
+                assessment.category, assessment.authenticationEvidence, snapshot.packageName,
+                node?.className?.let { name -> SAFE_ROLES.firstOrNull { name == it || name == "android.widget.$it" } } ?: "Other",
+            ))
+            return assessment
+        }
         if (isKnownBank(snapshot.packageName, appLabel)) {
-            return safeHandoff(
+            return blocked(safeHandoff(
                 ScreenRiskCategory.BANKING,
                 "Это банковское приложение. Продолжите самостоятельно; данные экрана не отправляются.",
-            )
+            ))
         }
 
-        val visibleElements = snapshot.elements.filter(ScreenElement::visibleToUser)
-        val addressEntryVisible = visibleElements.any {
-            it.editable && it.enabled && ADDRESS_ENTRY_ID.containsMatchIn(it.resourceId)
+        val visibleElements = snapshot.elements.filter {
+            it.visibilityEligibility(snapshot.viewportOrLegacy) == ScreenElementEligibility.Eligible
         }
-        val locationMarkerVisible = visibleElements.any {
-            !it.editable && LOCATION_PIN.containsMatchIn(it.resourceId)
-        }
-        if (visibleElements.any { it.password || isPasswordInputType(it.inputType) }) {
-            return pauseAuth()
-        }
-
+        // Authentication wins over financial/final labels elsewhere on the screen.
+        val keypadVisible = visibleElements.any { KEYPAD_CONTEXT.containsMatchIn(it.resourceId) }
+        val pinInputContext = keypadVisible || visibleElements.any { it.editable }
         for (element in visibleElements) {
-            for ((source, value) in rawSafetyValues(element)) {
+            authenticationEvidence(element, pinInputContext, keypadVisible)?.let {
+                return blocked(pauseAuth(it), element)
+            }
+        }
+        for (element in visibleElements) {
+            for (value in rawSafetyValues(element)) {
                 val normalized = value.lowercase(Locale.ROOT)
-                if (isAuthenticationSignal(normalized, element, source, addressEntryVisible, locationMarkerVisible)) {
-                    return pauseAuth()
-                }
                 if (FINANCIAL.containsMatchIn(normalized)) {
-                    return safeHandoff(
+                    return blocked(safeHandoff(
                         ScreenRiskCategory.FINANCIAL,
                         "На экране запрашиваются платёжные данные. Продолжите самостоятельно.",
-                    )
+                    ), element)
                 }
                 if (FinalActionPolicy.isFinalAction(normalized)) {
-                    return safeHandoff(
+                    return blocked(safeHandoff(
                         ScreenRiskCategory.FINAL_ACTION,
                         "Дальше возможно подтверждение заказа или оплаты. Проверьте всё и продолжите самостоятельно.",
-                    )
+                    ), element)
                 }
             }
         }
@@ -78,38 +103,42 @@ object ScreenSafetyGate {
         )
     }
 
-    private fun rawSafetyValues(element: ScreenElement): Sequence<Pair<String, String>> = sequenceOf(
-        "text" to element.text,
-        "description" to element.contentDescription,
-        "hint" to element.hintText,
-        "resource_id" to element.resourceId,
-    ).filter { it.second.isNotBlank() }
+    private fun rawSafetyValues(element: ScreenElement): Sequence<String> =
+        visibleLabels(element) + sequenceOf(element.resourceId)
 
-    private fun isAuthenticationSignal(
-        value: String,
+    private fun visibleLabels(element: ScreenElement): Sequence<String> = sequenceOf(
+        element.text, element.contentDescription, element.hintText,
+    ).filter(String::isNotBlank)
+
+    private fun authenticationEvidence(
         element: ScreenElement,
-        source: String,
-        addressEntryVisible: Boolean,
-        locationMarkerVisible: Boolean,
-    ): Boolean {
-        if (AUTHENTICATION.containsMatchIn(value)) return true
-        if (!PIN_TOKEN.containsMatchIn(value)) return false
-        // "Map pin" is a location marker, not a secret code. Keep a plain PIN
-        // label blocked, including on a non-editable heading or keypad.
-        if (element.editable) return true
-        if (LOCATION_PIN.containsMatchIn(value)) return false
-        // Some map widgets expose an unlabelled marker as `pin_slot`. Treat it
-        // as location chrome only while a real address-entry field is visible.
-        if (source == "resource_id" && value == "pin_slot" && addressEntryVisible && locationMarkerVisible) {
-            return false
+        pinInputContext: Boolean,
+        keypadVisible: Boolean,
+    ): AuthenticationEvidence? {
+        if (element.password) return AuthenticationEvidence.PASSWORD_NODE
+        if (isPasswordInputType(element.inputType)) return AuthenticationEvidence.PASSWORD_INPUT_TYPE
+        for (value in visibleLabels(element)) {
+            if (PASSWORD_TEXT.containsMatchIn(value)) return AuthenticationEvidence.PASSWORD_TEXT
+            if (OTP_OR_SMS.containsMatchIn(value)) return AuthenticationEvidence.OTP_OR_SMS_TEXT
+            if (BIOMETRIC_TEXT.containsMatchIn(value)) return AuthenticationEvidence.BIOMETRIC_TEXT
+            if (PIN_TOKEN.containsMatchIn(value) && !LOCATION_PIN.containsMatchIn(value) &&
+                (PIN_SECRET_CONTEXT.containsMatchIn(value) || pinInputContext)
+            ) return AuthenticationEvidence.PIN_INPUT_CONTEXT
         }
-        return true
+        // Resource tokens alone are weak. Require an actual editable PIN input
+        // or explicit PIN keypad structure, never a generic map marker/slot.
+        if (PIN_TOKEN.containsMatchIn(element.resourceId) &&
+            !LOCATION_PIN.containsMatchIn(element.resourceId) &&
+            ((element.editable && INPUT_CONTEXT.containsMatchIn(element.resourceId)) || keypadVisible)
+        ) return AuthenticationEvidence.PIN_INPUT_CONTEXT
+        return null
     }
 
-    private fun pauseAuth() = ScreenSafetyAssessment(
+    private fun pauseAuth(evidence: AuthenticationEvidence) = ScreenSafetyAssessment(
         disposition = ScreenDisposition.PAUSE_AUTH,
         category = ScreenRiskCategory.AUTHENTICATION,
         explanation = "Обнаружен этап авторизации. Введите секретные данные самостоятельно и затем продолжите.",
+        authenticationEvidence = evidence,
     )
 
     private fun safeHandoff(category: ScreenRiskCategory, explanation: String) =
@@ -131,20 +160,22 @@ object ScreenSafetyGate {
         return BANK_LABELS.any { normalizedLabel == it || normalizedLabel.startsWith("$it ") }
     }
 
-    private val AUTHENTICATION = Regex(
-        "(?:^|[^\\p{L}\\p{N}])(?:otp|парол(?:ь|я|ем)?|смс[- ]?код|код из смс|код подтверждения|биометри(?:я|и)|отпечат(?:ок|ка|ку|ком|ке) пальц(?:а|ем|е)|face ?id|fingerprint)(?:$|[^\\p{L}\\p{N}])",
-        setOf(RegexOption.IGNORE_CASE),
+    private fun tokens(pattern: String) = Regex(
+        "(?:^|[^\\p{L}\\p{N}])(?:$pattern)(?:$|[^\\p{L}\\p{N}])", RegexOption.IGNORE_CASE,
     )
+    private val PASSWORD_TEXT = tokens("password|парол(?:ь|я|ем)?")
+    private val OTP_OR_SMS = tokens("otp|(?:sms|смс)[- ]?код|(?:sms|смс)[- ]code|код (?:из (?:смс|sms)|подтверждения)|code from sms|one[- ]time (?:code|password)|verification code")
+    private val BIOMETRIC_TEXT = tokens("биометри(?:я|и)|отпечат(?:ок|ка|ку|ком|ке) пальц(?:а|ем|е)|face ?id|fingerprint")
+    private val PIN_SECRET_CONTEXT = tokens("enter|введите|ввод|код|code|secret|секретный")
+    private val INPUT_CONTEXT = tokens("input|entry|field|edit")
+    private val KEYPAD_CONTEXT = tokens("keypad|numpad")
+    private val SAFE_ROLES = setOf("EditText", "TextView", "Button", "ImageButton", "ImageView", "View", "ViewGroup")
     private val PIN_TOKEN = Regex(
         "(?:^|[^\\p{L}\\p{N}])(?:pin|пин)(?:$|[^\\p{L}\\p{N}])",
         RegexOption.IGNORE_CASE,
     )
     private val LOCATION_PIN = Regex(
         "(?:^|[^\\p{L}\\p{N}])(?:map|location|marker|source|origin|destination|pickup|dropoff|waypoint|route|карта|карты|адрес|точка)[_\\s-]+pin(?:$|[^\\p{L}\\p{N}])",
-        RegexOption.IGNORE_CASE,
-    )
-    private val ADDRESS_ENTRY_ID = Regex(
-        "(?:^|[_-])(?:address|destination|pickup|dropoff)(?:[_-]|$)",
         RegexOption.IGNORE_CASE,
     )
     private val FINANCIAL = Regex(

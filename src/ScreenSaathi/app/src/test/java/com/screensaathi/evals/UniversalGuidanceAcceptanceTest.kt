@@ -22,6 +22,27 @@ import org.junit.Test
 class UniversalGuidanceAcceptanceTest {
 
     @Test
+    fun `synthetic address button with weak map PIN chrome reaches one guide`() {
+        val base = fixture("ui_trees/yandex_go/destination.json")
+        val target = base.snapshot.elements.first { it.resourceId == base.plan.targetResourceId }
+        for (role in listOf("android.widget.Button", "android.widget.TextView")) {
+            val screen = base.snapshot.copy(packageName = "ordinary.route.example", elements = listOf(
+                target.copy(className = role, editable = false, clickable = true),
+                target.copy(index = 50, resourceId = "source_pin", text = "", editable = false, clickable = false),
+                target.copy(index = 51, resourceId = "pin_slot", text = "", editable = false, clickable = false),
+            ))
+            val planner = FixturePlanner(base.plan)
+            val emissions = mutableListOf<UniversalGuidanceEmission>()
+            val loop = UniversalGuidanceLoop(planner, { screen }, emit = emissions::add)
+            loop.startGoal(base.goal)
+            loop.confirmGoal()
+            assertEquals(role, ScenarioPhase.GUIDING_STEP, loop.session.phase)
+            assertEquals(1, planner.calls)
+            assertEquals(1, emissions.count { it.effect is ScenarioEffect.ShowGuidance })
+        }
+    }
+
+    @Test
     fun `every acceptance tree uses one safe app agnostic guidance path`() {
         fixtures().forEach { fixture ->
             assertTrue(

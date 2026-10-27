@@ -3,6 +3,7 @@ package com.screensaathi.session
 import android.graphics.Rect
 import com.screensaathi.screen.ScreenElement
 import com.screensaathi.screen.ScreenSnapshot
+import com.screensaathi.screen.ScreenViewport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -100,7 +101,7 @@ class ScreenSafetyGateTest {
     }
 
     @Test
-    fun `PIN slot without address context remains protected`() {
+    fun `PIN slot without secret input context is weak evidence`() {
         val assessment = ScreenSafetyGate.assess(
             snapshot(element(
                 text = "",
@@ -110,11 +111,11 @@ class ScreenSafetyGateTest {
             ))
         )
 
-        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+        assertEquals(ScreenDisposition.ALLOW, assessment.disposition)
     }
 
     @Test
-    fun `source input beside PIN slot is not enough to bypass auth pause`() {
+    fun `source input beside PIN slot is ordinary location chrome`() {
         val assessment = ScreenSafetyGate.assess(
             snapshot(
                 element(text = "", resourceId = "source_input"),
@@ -122,11 +123,11 @@ class ScreenSafetyGateTest {
             )
         )
 
-        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+        assertEquals(ScreenDisposition.ALLOW, assessment.disposition)
     }
 
     @Test
-    fun `disabled noneditable address field does not exempt PIN slot`() {
+    fun `disabled noneditable address field needs no PIN exception`() {
         val assessment = ScreenSafetyGate.assess(
             snapshot(
                 element(text = "", resourceId = "address_input", editable = false, enabled = false),
@@ -135,7 +136,106 @@ class ScreenSafetyGateTest {
             )
         )
 
-        assertEquals(ScreenDisposition.PAUSE_AUTH, assessment.disposition)
+        assertEquals(ScreenDisposition.ALLOW, assessment.disposition)
+    }
+
+    @Test
+    fun `button and text address controls allow weak PIN identifiers in every package`() {
+        for (role in listOf("Button", "TextView", "EditText")) {
+            for (id in listOf("pin", "pin_slot", "source_pin", "map_pin", "destination_pin")) {
+                val assessment = ScreenSafetyGate.assess(snapshot(
+                    element("Куда поедем?", "address_input", role, editable = role == "EditText"),
+                    element("", id, "View", editable = false),
+                    packageName = "unrelated.example.app",
+                ))
+                assertEquals("$role / $id", ScreenDisposition.ALLOW, assessment.disposition)
+            }
+        }
+        assertEquals(ScreenDisposition.ALLOW, ScreenSafetyGate.assess(
+            snapshot(element("", "pin")),
+        ).disposition)
+    }
+
+    @Test
+    fun `explicit secret language remains strong in visible labels hints and descriptions`() {
+        listOf("Password", "SMS code", "Code from SMS", "One-time code", "Код из SMS", "ПИН-код").forEach { label ->
+            listOf(
+                element(label, editable = false),
+                element("", editable = false).copy(hintText = label),
+                element("", editable = false).copy(contentDescription = label),
+            ).forEach { node ->
+                assertEquals(label, ScreenDisposition.PAUSE_AUTH, ScreenSafetyGate.assess(snapshot(node)).disposition)
+            }
+        }
+    }
+
+    @Test
+    fun `PIN heading needs visible editable or keypad context`() {
+        val heading = element("PIN", "heading", "TextView", editable = false)
+        assertEquals(ScreenDisposition.ALLOW, ScreenSafetyGate.assess(snapshot(heading)).disposition)
+        listOf(
+            element("", "code_entry"),
+            element("", "numeric_keypad", "ViewGroup", editable = false),
+        ).forEach { context ->
+            assertEquals(ScreenDisposition.PAUSE_AUTH, ScreenSafetyGate.assess(snapshot(heading, context)).disposition)
+            assertEquals(ScreenDisposition.ALLOW, ScreenSafetyGate.assess(snapshot(heading, context.copy(visibleToUser = false))).disposition)
+        }
+    }
+
+    @Test
+    fun `unlabelled PIN slots require a visible keypad to become authentication evidence`() {
+        val slot = element("", "pin_slot", "View", editable = false)
+        val keypad = element("", "numeric_keypad", "ViewGroup", editable = false)
+        assertEquals(ScreenDisposition.PAUSE_AUTH, ScreenSafetyGate.assess(snapshot(slot, keypad)).disposition)
+        assertEquals(ScreenDisposition.ALLOW, ScreenSafetyGate.assess(snapshot(slot, keypad.copy(visibleToUser = false))).disposition)
+    }
+
+    @Test
+    fun `diagnostics retain evidence and safe roles without external ids classes or values`() {
+        val diagnostics = mutableListOf<ScreenSafetyDiagnostic>()
+        val secret = "synthetic-private-value"
+        listOf(
+            element(secret, resourceId = "external_$secret", className = "external.$secret", password = true) to AuthenticationEvidence.PASSWORD_NODE,
+            element(secret, inputType = 0x81) to AuthenticationEvidence.PASSWORD_INPUT_TYPE,
+            element("Enter OTP") to AuthenticationEvidence.OTP_OR_SMS_TEXT,
+            element("Enter PIN") to AuthenticationEvidence.PIN_INPUT_CONTEXT,
+            element("Password") to AuthenticationEvidence.PASSWORD_TEXT,
+            element("Fingerprint") to AuthenticationEvidence.BIOMETRIC_TEXT,
+        ).forEach { (node, expectedEvidence) ->
+            val assessment = ScreenSafetyGate.assess(snapshot(node), diagnosticSink = diagnostics::add)
+            assertEquals(expectedEvidence, assessment.authenticationEvidence)
+            assertEquals(expectedEvidence, diagnostics.last().authenticationEvidence)
+            assertEquals(ScreenRiskCategory.AUTHENTICATION, diagnostics.last().category)
+            assertFalse(diagnostics.last().toString().contains(node.text))
+            assertFalse(diagnostics.last().toString().contains(secret))
+        }
+        assertEquals("Other", diagnostics.first().role)
+        assertEquals("EditText", diagnostics.last().role)
+        ScreenSafetyGate.assess(snapshot(element("ordinary")), diagnosticSink = diagnostics::add)
+        assertEquals(6, diagnostics.size)
+    }
+
+    @Test
+    fun `only visible viewport evidence blocks and disabled password captions still block`() {
+        val viewport = ScreenViewport(0, 0, 100, 100)
+        listOf(
+            element("", password = true, enabled = false),
+            element("", inputType = 0x81, enabled = false),
+            element("Enter OTP", editable = false, enabled = false),
+            element("Оплатить", editable = false, enabled = false),
+        ).forEach { sensitive ->
+            val expected = if (sensitive.text == "Оплатить") ScreenDisposition.SAFE_HANDOFF else ScreenDisposition.PAUSE_AUTH
+            assertEquals(expected, ScreenSafetyGate.assess(snapshot(sensitive).copy(viewport = viewport)).disposition)
+            listOf(
+                Rect().apply { left = 100; right = 200; bottom = 100 },
+                Rect(),
+                Rect().apply { left = 80; right = 180; bottom = 100 },
+            ).forEach { bounds ->
+                assertEquals(ScreenDisposition.ALLOW, ScreenSafetyGate.assess(
+                    snapshot(sensitive.copy(bounds = bounds)).copy(viewport = viewport),
+                ).disposition)
+            }
+        }
     }
 
     @Test
@@ -252,7 +352,7 @@ class ScreenSafetyGateTest {
         resourceId = resourceId,
         text = text,
         className = className,
-        bounds = Rect(0, 0, 100, 100),
+        bounds = Rect().apply { left = 0; top = 0; right = 100; bottom = 100 },
         editable = editable,
         clickable = true,
         enabled = enabled,

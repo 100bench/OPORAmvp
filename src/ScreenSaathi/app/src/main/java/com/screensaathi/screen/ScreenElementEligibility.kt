@@ -20,6 +20,12 @@ fun ScreenElement.eligibility(viewport: ScreenViewport): ScreenElementEligibilit
 internal fun ScreenElement.contextEligibility(viewport: ScreenViewport): ScreenElementEligibility {
     if (!visibleToUser) return ineligible(ScreenElementIneligibility.HIDDEN)
     if (password) return ineligible(ScreenElementIneligibility.PASSWORD)
+    return visibilityEligibility(viewport)
+}
+
+/** Safety must see visible secrets and disabled captions before privacy filtering. */
+internal fun ScreenElement.visibilityEligibility(viewport: ScreenViewport): ScreenElementEligibility {
+    if (!visibleToUser) return ineligible(ScreenElementIneligibility.HIDDEN)
     val left = bounds.left.toLong()
     val top = bounds.top.toLong()
     val right = bounds.right.toLong()

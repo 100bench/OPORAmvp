@@ -1,9 +1,12 @@
 package com.screensaathi.session
 
+import android.graphics.Rect
 import com.screensaathi.sarvam.GuidancePlanner
 import com.screensaathi.sarvam.PlannerOutcome
 import com.screensaathi.screen.PlannerScreen
 import com.screensaathi.screen.ScreenSnapshot
+import com.screensaathi.screen.ScreenElement
+import com.screensaathi.screen.ScreenViewport
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,6 +14,35 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 class BankSafetyIntegrationTest {
+
+    @Test
+    fun `visible disabled authentication evidence stops before planner or speech`() {
+        listOf("Password", "SMS code", "Enter PIN").forEach { label ->
+            var plannerCalls = 0
+            val planner = object : GuidancePlanner {
+                override fun planNext(screen: PlannerScreen, goal: String, stepNumber: Int,
+                    lastSafeInstruction: String?, repairFormat: Boolean): PlannerOutcome {
+                    plannerCalls++
+                    throw AssertionError("Authentication must stop locally")
+                }
+            }
+            val screen = ScreenSnapshot("ordinary.example", true, listOf(ScreenElement(
+                index = 0, resourceId = "caption", text = label, className = "TextView",
+                bounds = Rect().apply { right = 100; bottom = 100 },
+                editable = false, clickable = false, enabled = false,
+            )), viewport = ScreenViewport(0, 0, 200, 200))
+            val emissions = mutableListOf<UniversalGuidanceEmission>()
+            val loop = UniversalGuidanceLoop(planner, { screen }, emit = emissions::add)
+            loop.startGoal("Продолжить")
+            loop.confirmGoal()
+            assertEquals(label, ScenarioPhase.PAUSED_FOR_AUTH, loop.session.phase)
+            assertEquals(0, plannerCalls)
+            assertTrue(emissions.none { it.effect is ScenarioEffect.ShowGuidance || it.effect is ScenarioEffect.SpeakText })
+            assertTrue(VoiceCaptureSafetyBoundary { ScreenSafetyGate.assess(screen) }.runIfAllowed {
+                throw AssertionError("Recorder and STT must not start")
+            } != null)
+        }
+    }
 
     @Test
     fun `capture generation cannot advance after protected screen invalidates it`() {
