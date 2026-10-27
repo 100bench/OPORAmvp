@@ -67,8 +67,9 @@ class RealUiTreeRegressionTest(private val name: String, private val case: JSONO
         assertEquals(name, case.getString("phase"), loop.session.phase.name)
         assertEquals(name, case.getInt("max_planner_calls"), calls)
         assertTrue(emissions.none { it.effect is ScenarioEffect.LaunchTargetApp })
-        assertTrue(emissions.count { it.resolvedTarget != null } <= 1)
         val recovery = case.getString("recovery")
+        val renderedTargets = emissions.mapNotNull { it.resolvedTarget }
+        assertEquals(name, if (recovery == "guidance") 1 else 0, renderedTargets.size)
         assertTrue("Missing recovery: $recovery", emissions.any {
             when (recovery) {
                 "guidance" -> it.effect is ScenarioEffect.ShowGuidance
@@ -82,7 +83,7 @@ class RealUiTreeRegressionTest(private val name: String, private val case: JSONO
             }
         })
         val viewport = snapshot.viewportOrLegacy
-        emissions.mapNotNull { it.resolvedTarget }.forEach {
+        renderedTargets.forEach {
             assertEquals(case.optString("expected_target_resource_id", targetId), it.resourceId)
             val expectedBounds = snapshot.elements.single { node -> node.index == case.getInt("target_index") }.bounds
             assertEquals(listOf(expectedBounds.left, expectedBounds.top, expectedBounds.right, expectedBounds.bottom),

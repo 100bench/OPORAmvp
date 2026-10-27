@@ -7,9 +7,12 @@ enum class PlannerFailureKind {
     CONFIGURATION,
 }
 
+/** Fixed categories only: safe to log without provider text or UI values. */
+enum class PlannerResponseIssue { ENVELOPE, SCHEMA, LANGUAGE, LANGUAGE_CLAIM, FINAL_ACTION, TARGET }
+
 sealed interface PlannerOutcome {
     data class Success(val plan: PlannerResult) : PlannerOutcome
-    data class Failure(val kind: PlannerFailureKind, val reason: String) : PlannerOutcome
+    data class Failure(val kind: PlannerFailureKind, val reason: String, val responseIssue: PlannerResponseIssue? = null) : PlannerOutcome
 }
 
 /**

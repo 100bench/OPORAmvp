@@ -852,8 +852,8 @@ class OverlayService : Service() {
         }
     }
 
-    private fun submitTextCommand() {
-        val text = textCommand.text.toString().trim()
+    internal fun submitTextCommand(request: String = textCommand.text.toString()) {
+        val text = request.trim()
         if (text.isBlank()) return
         textCommand.setText("")
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
@@ -1023,7 +1023,8 @@ class OverlayService : Service() {
         /** Shared across any Service instance in this process — see onCreate(). */
         @Volatile private var windowsAdded = false
 
-        @Volatile private var live: OverlayService? = null
+        @Volatile internal var live: OverlayService? = null
+            private set
 
         /**
          * The system's window set changed — most importantly the keyboard

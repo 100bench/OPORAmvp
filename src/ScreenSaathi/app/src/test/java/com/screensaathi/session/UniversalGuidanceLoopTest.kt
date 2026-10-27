@@ -667,6 +667,30 @@ class UniversalGuidanceLoopTest {
     }
 
     @Test
+    fun `one shot answer offers further help when planner omits it`() {
+        val fixture = Fixture(answer("На экране поле для ввода VIN."))
+
+        fixture.loop.startGoal("Какие поля есть на экране?")
+
+        val visible = fixture.effects().filterIsInstance<ScenarioEffect.ShowAnswer>().single().instruction
+        val spoken = fixture.effects().filterIsInstance<ScenarioEffect.SpeakText>().single().text
+        assertTrue(visible.contains("VIN"))
+        assertTrue(visible.contains("Чем ещё помочь?"))
+        assertEquals(visible, spoken)
+    }
+
+    @Test
+    fun `one shot answer does not duplicate existing follow up`() {
+        val original = "На экране поле VIN. Скажите, чем помочь дальше."
+        val fixture = Fixture(answer(original))
+
+        fixture.loop.startGoal("Какие поля есть на экране?")
+
+        assertEquals(original,
+            fixture.effects().filterIsInstance<ScenarioEffect.ShowAnswer>().single().instruction)
+    }
+
+    @Test
     fun `dialog close control is highlighted locally without a planner call`() {
         val close = element(0, "close_button", "Закрыть", 900).copy(inDialog = true)
         val dialog = ScreenSnapshot("example.popup", true, listOf(close), activeDialog = true)

@@ -258,7 +258,11 @@ class SarvamPlanner private constructor(
         val groundedTerms = visibleLabels + visibleLabels.flatMap { label ->
             LATIN_TERM.findAll(label).map(MatchResult::value).toList()
         }
-        return parseGuidanceOutcome(response.body, goal, groundedTerms)
+        return parseGuidanceOutcome(response.body, goal, groundedTerms).also { outcome ->
+            if (outcome is PlannerOutcome.Failure && outcome.responseIssue != null) {
+                Log.w(TAG, "Guidance response rejected: issue=${outcome.responseIssue}")
+            }
+        }
     }
 
     private fun buildGuidancePayload(
@@ -276,7 +280,7 @@ class SarvamPlanner private constructor(
                     .append(lastSafeInstruction.trim()).append('\n')
             }
             if (repairFormat) {
-                append("repair_format: true; верните ровно один валидный tool-call. Для guide укажите только resource_id, дословно присутствующий в Elements; если у цели нет id, укажите точный видимый текст подписи в target.text. Не придумывайте id.\n")
+                append("repair_format: true; верните ровно один валидный tool-call. Для guide укажите только resource_id, дословно присутствующий в Elements; если у цели нет id, укажите точный видимый текст подписи в target.text. Не придумывайте id. Весь instruction — русский текст; латинские слова допустимы только как дословные подписи из Elements. Названия приложений иначе пишите кириллицей.\n")
             }
             append('\n').append(screen.toPromptText())
         }
@@ -465,45 +469,46 @@ class SarvamPlanner private constructor(
                 val arguments = function.optString("arguments").takeIf(String::isNotBlank)
                     ?: return@runCatching null
                 JSONObject(arguments)
-            }.getOrNull() ?: return invalidGuidance()
+            }.getOrNull() ?: return invalidGuidance(PlannerResponseIssue.ENVELOPE)
 
             if (!args.hasOnlyKeys(GUIDANCE_KEYS) || !GUIDANCE_REQUIRED.all(args::has)) {
-                return invalidGuidance()
+                return invalidGuidance(PlannerResponseIssue.SCHEMA)
             }
-            val isDone = args.opt("is_done") as? Boolean ?: return invalidGuidance()
-            val actionType = args.opt("action_type") as? String ?: return invalidGuidance()
-            if (actionType !in setOf("guide", "answer")) return invalidGuidance()
+            val isDone = args.opt("is_done") as? Boolean ?: return invalidGuidance(PlannerResponseIssue.SCHEMA)
+            val actionType = args.opt("action_type") as? String ?: return invalidGuidance(PlannerResponseIssue.SCHEMA)
+            if (actionType !in setOf("guide", "answer")) return invalidGuidance(PlannerResponseIssue.SCHEMA)
 
             val instruction = (args.opt("instruction") as? String)?.trim()
-                ?: return invalidGuidance()
-            if (instruction.isBlank()) return invalidGuidance()
+                ?: return invalidGuidance(PlannerResponseIssue.SCHEMA)
+            if (instruction.isBlank()) return invalidGuidance(PlannerResponseIssue.SCHEMA)
             val targetValue = args.opt("target")
             val target = when (targetValue) {
                 null -> null
                 is JSONObject -> targetValue
-                else -> return invalidGuidance()
+                else -> return invalidGuidance(PlannerResponseIssue.SCHEMA)
             }
-            if (target != null && !target.hasOnlyKeys(TARGET_KEYS)) return invalidGuidance()
-            val resourceId = target.optionalString("resource_id") ?: return invalidGuidance()
-            val targetText = target.optionalString("text") ?: return invalidGuidance()
+            if (target != null && !target.hasOnlyKeys(TARGET_KEYS)) return invalidGuidance(PlannerResponseIssue.SCHEMA)
+            val resourceId = target.optionalString("resource_id") ?: return invalidGuidance(PlannerResponseIssue.SCHEMA)
+            val targetText = target.optionalString("text") ?: return invalidGuidance(PlannerResponseIssue.SCHEMA)
 
-            val claimedLanguage = args.opt("language") as? String ?: return invalidGuidance()
-            if (claimedLanguage != Language.APP_DEFAULT ||
-                !Language.isRussianText(instruction, groundedLabels + targetText)
-            ) return invalidGuidance()
+            val claimedLanguage = args.opt("language") as? String ?: return invalidGuidance(PlannerResponseIssue.SCHEMA)
+            if (claimedLanguage != Language.APP_DEFAULT) return invalidGuidance(PlannerResponseIssue.LANGUAGE_CLAIM)
+            if (!Language.isRussianText(instruction, groundedLabels + targetText)) {
+                return invalidGuidance(PlannerResponseIssue.LANGUAGE)
+            }
             val confidence = (args.opt("confidence") as? Number)?.toDouble()
-                ?: return invalidGuidance()
-            if (!confidence.isFinite() || confidence !in 0.0..1.0) return invalidGuidance()
-            val reason = args.opt("reason") as? String ?: return invalidGuidance()
+                ?: return invalidGuidance(PlannerResponseIssue.SCHEMA)
+            if (!confidence.isFinite() || confidence !in 0.0..1.0) return invalidGuidance(PlannerResponseIssue.SCHEMA)
+            val reason = args.opt("reason") as? String ?: return invalidGuidance(PlannerResponseIssue.SCHEMA)
 
             if (FinalActionPolicy.containsFinalActionInstruction(instruction)) {
-                return invalidGuidance()
+                return invalidGuidance(PlannerResponseIssue.FINAL_ACTION)
             }
 
             if (actionType == "guide") {
-                if (isDone || (resourceId.isBlank() && targetText.isBlank())) return invalidGuidance()
+                if (isDone || (resourceId.isBlank() && targetText.isBlank())) return invalidGuidance(PlannerResponseIssue.TARGET)
                 if (listOf(resourceId, targetText).any(FinalActionPolicy::isFinalAction)) {
-                    return invalidGuidance()
+                    return invalidGuidance(PlannerResponseIssue.FINAL_ACTION)
                 }
             }
 
@@ -526,9 +531,10 @@ class SarvamPlanner private constructor(
             )
         }
 
-        private fun invalidGuidance(): PlannerOutcome.Failure = PlannerOutcome.Failure(
+        private fun invalidGuidance(issue: PlannerResponseIssue): PlannerOutcome.Failure = PlannerOutcome.Failure(
             PlannerFailureKind.INVALID_RESPONSE,
             "AI-планировщик вернул неверный формат.",
+            responseIssue = issue,
         )
 
         private val GUIDANCE_KEYS = setOf(

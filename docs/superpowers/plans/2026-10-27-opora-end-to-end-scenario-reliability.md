@@ -251,15 +251,21 @@ data class ScenarioTelemetryEvent(
 - Create: `docs/superpowers/reports/2026-10-27-opora-end-to-end-scenario-reliability.md`
 - Update checkboxes/execution notes in this plan.
 
-- [ ] **Step 1: Extend the opt-in live set.** Add at least 20 planner samples spanning Yandex address/map states, Auto.ru plate/VIN/forms, popup close/manual dismiss, true auth/final handoff, and current-screen questions. Use sanitized fixtures and the production prompt/transport; ordinary unit runs remain offline and free.
-- [ ] **Step 2: Run the live gate.** Through the current Mac proxy/OpenAI setup, require zero safety errors, ≥90% usable plans, and ≤10% format repair. Record model, prompt version/hash, date, sample count, p50/p95 planner latency, repair rate, and approximate usage without storing prompts containing personal data.
-- [ ] **Step 3: Build and install.** Run `./gradlew clean testDebugUnitTest assembleDebug`, install the APK on Samsung, restore `adb reverse tcp:8787 tcp:8787`, verify proxy health, accessibility binding, overlay permission, and app version.
+- [x] **Step 1: Extend the opt-in live set.** Add at least 20 planner samples spanning Yandex address/map states, Auto.ru plate/VIN/forms, popup close/manual dismiss, true auth/final handoff, and current-screen questions. Use sanitized fixtures and the production prompt/transport; ordinary unit runs remain offline and free.
+- [x] **Step 2: Run the live gate.** Through the current Mac proxy/OpenAI setup, require zero safety errors, ≥90% usable plans, and ≤10% format repair. Record model, prompt version/hash, date, sample count, p50/p95 planner latency, repair rate, and approximate usage without storing prompts containing personal data.
+- [x] **Step 3: Build and install.** Run `./gradlew clean testDebugUnitTest assembleDebug`, install the APK on Samsung, restore `adb reverse tcp:8787 tcp:8787`, verify proxy health, accessibility binding, overlay permission, and app version.
 - [ ] **Step 4: Developer text smoke — Yandex Go.** From a documented clean start, run the complete text route through address entry and stop before final order. Verify correct highlights, no system-bottom target, no false auth, no duplicate planner call per unchanged tree, popup behavior, and safe final handoff.
 - [ ] **Step 5: Developer text smoke — Auto.ru.** Run the complete text route through plate, VIN, later forms, and stop before publish. The user enters any personal values. Verify correct input/control bounds and typed recovery wherever the tree cannot expose a safe target.
 - [ ] **Step 6: Developer text smoke — one-shot questions.** Run two current-screen questions; each response must be short, Opora-framed, and must end any previous guidance session.
 - [ ] **Step 7: User voice acceptance.** Give the user four concise cases: one full voice start for Yandex, one full voice start for Auto.ru, and two one-step voice current-screen questions. Popup/auth states do not require separate voice commands. Record pass/fail and timing only; do not record speech.
-- [ ] **Step 8: Write the evidence report.** Separate automated offline, sanitized-real replay, live-model, developer text, user voice, and latency evidence. List any accepted exception and its owner/date; otherwise mark the release blocked.
+- [x] **Step 8: Write the evidence report.** Separate automated offline, sanitized-real replay, live-model, developer text, user voice, and latency evidence. List any accepted exception and its owner/date; otherwise mark the release blocked.
 - [ ] **Step 9: Final verification and commit.** Rerun full unit tests and `assembleDebug`; inspect `git diff --check` and `git status`. Commit report/docs as `docs: record end-to-end scenario acceptance`.
+
+Execution note, 28 October: the live gate passed 20/20 on the final prompt and
+the debug APK is installed. Full physical routes, 20 warm text measurements and
+user voice acceptance remain open; the evidence report marks release blocked.
+The separate popup/auth rows are local zero-call checks and do not inflate the
+20 paid planner samples.
 
 ## Task 9: Review, push, and hand off
 

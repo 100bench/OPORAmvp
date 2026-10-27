@@ -2,6 +2,7 @@ package com.screensaathi.sarvam
 
 import com.screensaathi.task.GuidedTask
 import com.screensaathi.task.TaskStep
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -396,6 +397,33 @@ class SarvamPlannerParseTest {
         assertTrue(plan.isDone)
         assertEquals("", plan.targetResourceId)
         assertEquals("", plan.targetText)
+    }
+
+    @Test
+    fun `invalid response diagnostics identify boundaries without retaining values`() {
+        val valid = org.json.JSONObject("""{"is_done":false,"action_type":"guide",
+            "target":{"resource_id":"profile","text":"Профиль"},
+            "instruction":"Нажмите профиль.","language":"ru-RU",
+            "confidence":0.9,"reason":"PRIVATE_PROVIDER_SENTINEL"}""")
+        val rows = listOf(
+            "{PRIVATE_PROVIDER_SENTINEL" to PlannerResponseIssue.ENVELOPE,
+            guidanceResponse(org.json.JSONObject(valid.toString()).put("extra", "PRIVATE_PROVIDER_SENTINEL").toString()) to PlannerResponseIssue.SCHEMA,
+            guidanceResponse(org.json.JSONObject(valid.toString()).put("instruction", "Tap PRIVATE_PROVIDER_SENTINEL").toString()) to PlannerResponseIssue.LANGUAGE,
+            guidanceResponse(org.json.JSONObject(valid.toString()).put("instruction", "Нажмите оплатить.").toString()) to PlannerResponseIssue.FINAL_ACTION,
+            guidanceResponse(org.json.JSONObject(valid.toString()).put("target", org.json.JSONObject()).toString()) to PlannerResponseIssue.TARGET)
+        rows.forEach { (raw, expected) ->
+            val result = SarvamPlanner.parseGuidanceOutcome(raw, "Помоги") as PlannerOutcome.Failure
+            assertEquals(expected, result.responseIssue)
+            assertFalse(result.toString().contains("PRIVATE_PROVIDER_SENTINEL"))
+        }
+    }
+
+    @Test
+    fun `ungrounded Latin app brand remains rejected in otherwise Russian answer`() {
+        val outcome = SarvamPlanner.parseGuidanceOutcome(guidanceResponse(
+            """{"is_done":true,"action_type":"answer","instruction":"На экране Яндекс Go. Я помогу продолжить.",
+            "language":"ru-RU","confidence":0.9,"reason":"test"}"""), "Что на экране?")
+        assertEquals(PlannerResponseIssue.LANGUAGE, (outcome as PlannerOutcome.Failure).responseIssue)
     }
 
     private fun guidanceResponse(args: String): String =

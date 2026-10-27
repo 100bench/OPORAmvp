@@ -575,7 +575,10 @@ class UniversalGuidanceLoop(
             return
         }
         if (plan.isDone || plan.actionType == "answer") {
-            dispatch(ScenarioEvent.PlannerAnswered(plan.instruction), token, expectedAttempt = attempt)
+            val instruction = if (plan.actionType == "answer") {
+                oneShotAnswerWithFollowUp(plan.instruction)
+            } else plan.instruction
+            dispatch(ScenarioEvent.PlannerAnswered(instruction), token, expectedAttempt = attempt)
             return
         }
 
@@ -618,6 +621,15 @@ class UniversalGuidanceLoop(
             expectedAttempt = attempt,
             targetToCommit = target,
         )
+    }
+
+    private fun oneShotAnswerWithFollowUp(instruction: String): String {
+        val answer = instruction.trim()
+        val alreadyOffersHelp = Regex(
+            "(?:скажите.{0,40}(?:помочь|сделать)|чем.{0,25}помочь|нужна.{0,25}помощь|подскаж)",
+            RegexOption.IGNORE_CASE,
+        ).containsMatchIn(answer)
+        return if (alreadyOffersHelp) answer else "$answer Чем ещё помочь?"
     }
 
     private fun assess(snapshot: ScreenSnapshot): ScreenSafetyAssessment =
