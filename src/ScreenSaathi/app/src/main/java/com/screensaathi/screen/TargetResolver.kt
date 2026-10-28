@@ -147,9 +147,24 @@ object TargetResolver {
     private fun actionableControl(candidate: Candidate, snapshot: ScreenSnapshot): ScreenElement? {
         val element = candidate.element
         if (element.isActionable) return element
+        // Compose/DivKit can expose the visible label as a sibling of its real
+        // clickable card while reporting a screen-sized clickable ancestor.
+        // The smallest actionable box that actually contains the label is a
+        // more precise local target than that broad ancestry marker.
+        val shortExactLabel = element.text.isNotBlank() && candidate.score >= SCORE_NORMALIZED &&
+            element.text.length <= MAX_FIELD_LABEL_LENGTH &&
+            element.text.trim().split(Regex("\\s+")).size <= MAX_FIELD_LABEL_WORDS
+        if (shortExactLabel) {
+            snapshot.elements.asSequence()
+                .filter { it.index != element.index && it.clickable && !it.editable }
+                .filter { it.eligibility(snapshot.viewportOrLegacy) == ScreenElementEligibility.Eligible }
+                .filter { contains(it.bounds, element.bounds) }
+                .minByOrNull { area(it.bounds) }
+                ?.let { return it }
+        }
         element.clickableAncestorIndex?.let { index ->
-            // Explicit ancestry is stronger than spatial proximity. An invalid
-            // ancestor must not cause a guess at a different neighbouring field.
+            // After exact geometric containment, explicit ancestry remains
+            // stronger than looser below/nearby-field proximity.
             return snapshot.elements.singleOrNull { it.index == index && it.isActionable }
         }
         // A loose match in explanatory copy is not a target. An exact, short

@@ -48,17 +48,37 @@ class TaxiTargetResolverTest {
     @Test
     fun `planner index cannot redirect a static label to a nearby input`() {
         val label = element(index = 10, text = "Адрес").copy(
-            bounds = Rect(40, 100, 900, 180),
+            bounds = rect(40, 100, 900, 180),
             clickable = false,
         )
         val field = element(index = 11, text = "").copy(
-            bounds = Rect(40, 220, 900, 380),
+            bounds = rect(40, 220, 900, 380),
             editable = true,
         )
 
         val result = TargetResolver.resolveIndex(label.index, snapshot(label, field))
 
         assertTrue(result !is TargetResolver.Result.Found)
+    }
+
+    @Test
+    fun `semantic taxi label resolves to containing card not full screen ancestor`() {
+        val fullScreen = element(index = 6, text = "").copy(
+            bounds = rect(0, 0, 1080, 2200),
+        )
+        val label = element(index = 7, text = "Такси").copy(
+            bounds = rect(666, 648, 901, 682),
+            clickable = false,
+            clickableAncestorIndex = fullScreen.index,
+        )
+        val card = element(index = 8, text = "").copy(
+            bounds = rect(540, 463, 1028, 706),
+        )
+
+        val result = TargetResolver.resolveLabel("Такси", snapshot(fullScreen, label, card))
+
+        assertTrue("Expected Found, got ${result.javaClass.simpleName}", result is TargetResolver.Result.Found)
+        assertSame(card, (result as TargetResolver.Result.Found).candidate.element)
     }
 
     private fun snapshot(vararg elements: ScreenElement) = ScreenSnapshot(
@@ -82,4 +102,11 @@ class TaxiTargetResolverTest {
         editable = false,
         clickable = true,
     )
+
+    private fun rect(left: Int, top: Int, right: Int, bottom: Int) = Rect().apply {
+        this.left = left
+        this.top = top
+        this.right = right
+        this.bottom = bottom
+    }
 }

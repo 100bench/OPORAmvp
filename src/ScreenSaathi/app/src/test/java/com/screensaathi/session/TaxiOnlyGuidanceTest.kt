@@ -73,6 +73,33 @@ class TaxiOnlyGuidanceTest {
         assertEquals(second.bounds.bottom, target?.bottom)
     }
 
+    @Test
+    fun `taxi label uses its containing card instead of a full screen ancestor`() {
+        val fullScreenAncestor = element(2, "root", "", top = 0).copy(
+            bounds = rect(0, 0, 1080, 2200),
+        )
+        val taxiLabel = element(3, "", "Такси", top = 300).copy(
+            bounds = rect(666, 648, 901, 682),
+            clickable = false,
+            clickableAncestorIndex = fullScreenAncestor.index,
+        )
+        val taxiCard = element(4, "", "", top = 250).copy(
+            bounds = rect(540, 463, 1028, 706),
+        )
+        val screen = snapshot(fullScreenAncestor, taxiLabel, taxiCard)
+        val planner = FixedPlanner(guide(index = -1, text = "Такси"))
+        val emissions = mutableListOf<UniversalGuidanceEmission>()
+        val loop = UniversalGuidanceLoop(planner, { screen }, clock(), emissions::add)
+
+        loop.startGoal("Заказать такси")
+
+        val target = emissions.single { it.effect is ScenarioEffect.ShowGuidance }.resolvedTarget
+        assertEquals(taxiCard.bounds.left, target?.left)
+        assertEquals(taxiCard.bounds.top, target?.top)
+        assertEquals(taxiCard.bounds.right, target?.right)
+        assertEquals(taxiCard.bounds.bottom, target?.bottom)
+    }
+
     private class FixedPlanner(private val outcome: PlannerOutcome) : GuidancePlanner {
         var calls = 0
 
@@ -143,5 +170,12 @@ class TaxiOnlyGuidanceTest {
     private fun clock(): () -> Long {
         var now = 0L
         return { ++now }
+    }
+
+    private fun rect(left: Int, top: Int, right: Int, bottom: Int) = Rect().apply {
+        this.left = left
+        this.top = top
+        this.right = right
+        this.bottom = bottom
     }
 }

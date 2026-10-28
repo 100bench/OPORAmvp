@@ -378,7 +378,7 @@ class SarvamPlanner private constructor(
                 "function",
                 JSONObject()
                     .put("name", "set_next_step")
-                    .put("description", "Вернуть следующий шаг заказа такси по текущему экрану.")
+                    .put("description", "Вернуть следующий ручной шаг к цели по текущему экрану.")
                     .put("parameters", params)
             )
     }
@@ -387,7 +387,7 @@ class SarvamPlanner private constructor(
         private const val TAG = "SarvamPlanner"
         private const val PROMPT = "prompts/planner_v1.md"
         private const val DEFAULT_SYSTEM_PROMPT =
-            "Помогите пользователю заказать такси по текущему дереву интерфейса. Верните ровно один следующий ручной шаг guide с одной видимой целью или answer, когда заказ уже оформлен. Пишите только по-русски и не выполняйте действия за пользователя."
+            "Помогите пользователю достичь названной цели по текущему дереву интерфейса. Верните ровно один следующий ручной шаг guide с одной видимой целью или answer, когда цель уже достигнута. Пишите только по-русски и не выполняйте действия за пользователя."
         private val JSON = "application/json; charset=utf-8".toMediaType()
 
         private fun loadSystemPrompt(context: Context): String = runCatching {
