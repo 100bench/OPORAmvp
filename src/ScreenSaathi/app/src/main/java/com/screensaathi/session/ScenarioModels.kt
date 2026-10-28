@@ -27,11 +27,13 @@ enum class ScenarioPhase {
 data class ScenarioTarget(
     val resourceId: String? = null,
     val text: String? = null,
+    val elementIndex: Int? = null,
 ) {
     init {
-        require(!resourceId.isNullOrBlank() || !text.isNullOrBlank()) {
-            "A scenario target needs a resource id or visible text"
+        require(!resourceId.isNullOrBlank() || !text.isNullOrBlank() || elementIndex != null) {
+            "A scenario target needs a resource id, visible text or snapshot index"
         }
+        require(elementIndex == null || elementIndex >= 0) { "Snapshot index cannot be negative" }
     }
 }
 
