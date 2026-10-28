@@ -202,7 +202,6 @@ object ScenarioReducer {
             listOf(
                 ScenarioEffect.ClearHighlight,
                 ScenarioEffect.ShowAnswer(instruction),
-                ScenarioEffect.SpeakText(instruction),
                 ScenarioEffect.DeleteResumeCapsule,
                 ScenarioEffect.FinishScenario,
             ),
@@ -215,7 +214,6 @@ object ScenarioReducer {
         nowMs: Long,
     ): ScenarioTransition {
         if (session.phase != ScenarioPhase.ANALYZING_SCREEN) return unchanged(session)
-        val isFirstGuide = session.stepNumber == 0
         val base = session.copy(
             mode = ScenarioMode.GUIDANCE,
             currentGuidance = event.guidance,
@@ -225,14 +223,7 @@ object ScenarioReducer {
             preserveReplanFailures = false,
             updatedAtMs = nowMs,
         )
-        return if (isFirstGuide) {
-            ScenarioTransition(
-                base.copy(phase = ScenarioPhase.CONFIRMING_GOAL),
-                listOf(ScenarioEffect.ConfirmGoal(session.goal)),
-            )
-        } else {
-            presentGuidance(base, event.guidance, session.stepNumber + 1, nowMs)
-        }
+        return presentGuidance(base, event.guidance, session.stepNumber + 1, nowMs)
     }
 
     private fun goalConfirmed(session: ScenarioSession, nowMs: Long): ScenarioTransition {
@@ -257,7 +248,6 @@ object ScenarioReducer {
         ),
         effects = listOf(
             ScenarioEffect.ShowGuidance(guidance),
-            ScenarioEffect.SpeakText(guidance.instruction),
             ScenarioEffect.SaveResumeCapsule,
         ),
     )
@@ -468,7 +458,6 @@ object ScenarioReducer {
             ),
             listOf(
                 ScenarioEffect.ShowGuidance(event.guidance),
-                ScenarioEffect.SpeakText(event.guidance.instruction),
             ),
         )
     }
@@ -674,7 +663,6 @@ object ScenarioReducer {
                 session.copy(updatedAtMs = nowMs),
                 listOf(
                     ScenarioEffect.ShowGuidance(guidance),
-                    ScenarioEffect.SpeakText(instruction),
                 ),
             )
         }

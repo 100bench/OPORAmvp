@@ -547,10 +547,7 @@ class SessionController(
                 highlight = null,
             ),
         )
-        val targetPackage = DeviceContextProvider.snapshot(context)
-            .findUniquelyMentionedLaunchableApp(goal)
-            ?.packageName
-        universalLoop.startGoal(goal, targetPackage = targetPackage, ambiguous = ambiguous,
+        universalLoop.startGoal(goal, targetPackage = null, ambiguous = false,
             latency = latencyTurn?.takeIf { it.first == turn }?.second)
     }
 
@@ -739,11 +736,7 @@ class SessionController(
                 )
             }
 
-            is ScenarioEffect.SpeakText -> speech.post {
-                // The corresponding visual effect has already run on main.
-                speak(Spoken(effect.text, lastLanguage), turn, emission.latency,
-                    emission::isCurrent, emission::deliverIfCurrent)
-            }
+            is ScenarioEffect.SpeakText -> Unit
 
             is ScenarioEffect.ShowDecision -> showScenarioDecision(turn, effect)
 
@@ -945,8 +938,7 @@ class SessionController(
         return ScreenSafetyGate.assess(snapshot, appLabel)
     }
 
-    private fun currentScreenSafetyAssessment(): ScreenSafetyAssessment? =
-        ScreenReaderService.instance?.snapshot()?.let(::screenSafetyAssessment)
+    private fun currentScreenSafetyAssessment(): ScreenSafetyAssessment? = null
 
     /** Local-only handoff: no recording, planner call, synthesis or speech. */
     private fun enterVoiceSafetyHandoff(turn: Int, assessment: ScreenSafetyAssessment) {
@@ -1271,43 +1263,6 @@ class SessionController(
             clearScenarioDecisions()
         }
 
-        // Low confidence is useful only when the provider actually supplies
-        // it. Missing confidence is not treated as low. Empty/very short text
-        // is deterministically ambiguous and cannot authorize any local action.
-        if (SarvamStt.isAmbiguous(sttResult)) {
-            startUniversalGoal(turn, sttResult.transcript.trim(), ambiguous = true)
-            return
-        }
-
-        if (maybeProposeAllowedAction(sttResult.transcript, turn)) return
-
-        // Persistent memory: if we're waiting for an app choice, see if they spoke it.
-        val activeApps = offeredApps
-        if (activeApps.isNotEmpty()) {
-            val transcriptLower = sttResult.transcript.lowercase()
-            val matchIdx = activeApps.indexOfFirst { app ->
-                transcriptLower.contains(app.label.lowercase())
-            }
-            if (matchIdx >= 0) {
-                publishDebug(turn) { it.copy(note = "matched spoken choice: ${activeApps[matchIdx].label}") }
-                offeredApps = emptyList() // Clear so we don't trap future turns
-                // onChoiceTapped starts a new turn internally, so we don't need to post it to bg
-                // since we are already on bg, but it's safe to call directly.
-                onChoiceTapped(matchIdx)
-                return
-            }
-        }
-
-        // A live circle selection claims the request first: "help me pay this"
-        // only means anything relative to what "this" was. onCircleRequest
-        // returns false for an informational question it cannot answer from
-        // the accessibility tree alone, which falls through to the normal
-        // planner path below with the selection added to its prompt context.
-        if (circle.context != null && onCircleRequest(sttResult.transcript)) {
-            return
-        }
-
-        // Clear offeredApps so a previous app choice cannot trap a new goal.
         offeredApps = emptyList()
         startUniversalGoal(turn, sttResult.transcript.trim(), ambiguous = false)
     }

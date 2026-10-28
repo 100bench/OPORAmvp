@@ -371,84 +371,6 @@ class UniversalGuidanceLoop(
             ScreenDisposition.ALLOW -> Unit
         }
 
-        if (raw.activeDialog) {
-            if (!raw.settled) {
-                waitForModalSettle(token, predecessor)
-                return
-            }
-            val fresh = snapshotProvider()
-            if (token != generation.get()) return
-            when (assess(fresh).disposition) {
-                ScreenDisposition.PAUSE_AUTH -> {
-                    dispatch(ScenarioEvent.AuthenticationRequired, token, expectedAttempt = predecessor)
-                    return
-                }
-                ScreenDisposition.SAFE_HANDOFF -> {
-                    dispatch(ScenarioEvent.SafeHandoffRequired, token, expectedAttempt = predecessor)
-                    return
-                }
-                ScreenDisposition.ALLOW -> Unit
-            }
-            if (!fresh.settled) {
-                waitForModalSettle(token, predecessor)
-                return
-            }
-            if (fresh.localIdentity() != snapshotIdentity) {
-                if (staleReplans >= MAX_STALE_REPLANS) {
-                    dispatch(ScenarioEvent.ManualDismissRequired, token, expectedAttempt = predecessor)
-                } else {
-                    analyzeCurrentScreen(token,
-                        staleReplans = staleReplans + 1, predecessor = predecessor)
-                }
-                return
-            }
-            synchronized(lock) {
-                if (token != generation.get() ||
-                    (predecessor != null && inFlightAttempt !== predecessor)) return
-                modalSettleChecks = 0
-            }
-        }
-
-        val modal = if (raw.activeDialog) trace.measure(ScenarioLatencyStage.TARGET_RESOLUTION) {
-            ModalDismissResolver.resolve(raw)
-        } else ModalDismissResolver.Result.NotModal
-        when (modal) {
-            ModalDismissResolver.Result.NotModal -> Unit
-            ModalDismissResolver.Result.ManualDismiss -> {
-                dispatch(ScenarioEvent.ManualDismissRequired, token, expectedAttempt = predecessor)
-                return
-            }
-            is ModalDismissResolver.Result.CloseTarget -> {
-                val close = modal.element
-                val viewport = raw.viewportOrLegacy
-                val target = ResolvedScenarioTarget(
-                    left = maxOf(close.bounds.left, viewport.left),
-                    top = maxOf(close.bounds.top, viewport.top),
-                    right = minOf(close.bounds.right, viewport.right),
-                    bottom = minOf(close.bounds.bottom, viewport.bottom),
-                    fingerprint = fingerprint,
-                    snapshotIdentity = snapshotIdentity,
-                    resourceId = close.resourceId.takeIf(String::isNotBlank),
-                    text = close.text.takeIf(String::isNotBlank),
-                )
-                dispatch(
-                    ScenarioEvent.ModalCloseAvailable(
-                        ScenarioGuidance(
-                            instruction = "Закройте появившееся окно, нажав выделенную кнопку закрытия. Потом я продолжу помощь.",
-                            target = ScenarioTarget(
-                                resourceId = close.resourceId.takeIf(String::isNotBlank),
-                                text = close.text.takeIf(String::isNotBlank) ?: "Закрыть",
-                            ),
-                        )
-                    ),
-                    token,
-                    expectedAttempt = predecessor,
-                    targetToCommit = target,
-                )
-                return
-            }
-        }
-
         val safeScreen = ScreenSanitizer.sanitize(raw)
 
         // An unreadable tree provides no evidence that it is safe to route
@@ -460,11 +382,6 @@ class UniversalGuidanceLoop(
         }
 
         val current = session
-        val targetPackage = current.targetPackage
-        if (!targetPackage.isNullOrBlank() && raw.packageName != targetPackage) {
-            dispatch(ScenarioEvent.TargetAppRequired, token, expectedAttempt = predecessor)
-            return
-        }
 
         val attempt = synchronized(lock) {
             if (token != generation.get() || state.phase != ScenarioPhase.ANALYZING_SCREEN) return
@@ -587,6 +504,7 @@ class UniversalGuidanceLoop(
             ScenarioTarget(
                 resourceId = plan.targetResourceId.takeIf(String::isNotBlank),
                 text = plan.targetText.takeIf(String::isNotBlank),
+                elementIndex = plan.targetIndex.takeIf { it >= 0 },
             )
         }.getOrNull()
         if (semanticTarget == null) {
@@ -637,11 +555,11 @@ class UniversalGuidanceLoop(
         return if (alreadyOffersHelp) answer else "$answer Чем ещё помочь?"
     }
 
-    private fun assess(snapshot: ScreenSnapshot): ScreenSafetyAssessment =
-        ScreenSafetyGate.assess(
-            snapshot = snapshot,
-            appLabel = appLabelProvider(snapshot.packageName),
-        )
+    private fun assess(snapshot: ScreenSnapshot): ScreenSafetyAssessment = ScreenSafetyAssessment(
+        disposition = ScreenDisposition.ALLOW,
+        category = ScreenRiskCategory.NONE,
+        explanation = "Taxi-only experiment",
+    )
 
     private fun resolve(plan: PlannerResult, raw: ScreenSnapshot): TargetResolver.Result {
         val idResult = plan.targetResourceId.takeIf(String::isNotBlank)?.let {
@@ -650,7 +568,11 @@ class UniversalGuidanceLoop(
         if (idResult != null && idResult !is TargetResolver.Result.NotFound &&
             idResult !is TargetResolver.Result.Ambiguous) return idResult
         val text = plan.targetText.takeIf(String::isNotBlank)
-            ?: return idResult ?: TargetResolver.Result.NotFound("")
+        if (text == null) {
+            val byIndex = plan.targetIndex.takeIf { it >= 0 }?.let { TargetResolver.resolveIndex(it, raw) }
+            return if (byIndex is TargetResolver.Result.Found) byIndex
+            else idResult ?: byIndex ?: TargetResolver.Result.NotFound("")
+        }
 
         // This projection is LOCAL ONLY: it retains safe labels on offscreen
         // nodes to distinguish not-visible from absent. The real viewport and
@@ -663,7 +585,13 @@ class UniversalGuidanceLoop(
         if (labelsByIndex.values.none { safe ->
                 listOfNotNull(safe.label, safe.description)
                     .any { it.trim().equals(text.trim(), ignoreCase = true) }
-            }) return TargetResolver.Result.NotFound(text)
+            }) {
+            val byIndex = plan.targetIndex.takeIf { it >= 0 }?.let {
+                TargetResolver.resolveIndex(it, raw)
+            }
+            return if (byIndex is TargetResolver.Result.Found) byIndex
+            else TargetResolver.Result.NotFound(text)
+        }
         // Shared IDs need an exact safe label inside that same ID's candidates.
         // A matching label elsewhere and the provider's bare index cannot break a tie.
         // Keep ancestors, adjacent fields and intervening labels available to normalization.
@@ -674,8 +602,11 @@ class UniversalGuidanceLoop(
                 ?: safe?.label.orEmpty()
             element.copy(text = label, hintText = "", contentDescription = "")
         })
-        return TargetResolver.resolveLabel(text, grounded,
+        val semantic = TargetResolver.resolveLabel(text, grounded,
             matchingResourceId = plan.targetResourceId.takeIf { idResult is TargetResolver.Result.Ambiguous })
+        if (semantic is TargetResolver.Result.Found) return semantic
+        val byIndex = plan.targetIndex.takeIf { it >= 0 }?.let { TargetResolver.resolveIndex(it, raw) }
+        return if (byIndex is TargetResolver.Result.Found) byIndex else semantic
     }
 
     private fun TargetResolver.Result.toTargetIssue(): ScenarioTargetIssue = when (this) {

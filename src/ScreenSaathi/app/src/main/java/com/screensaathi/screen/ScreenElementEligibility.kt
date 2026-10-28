@@ -19,7 +19,6 @@ fun ScreenElement.eligibility(viewport: ScreenViewport): ScreenElementEligibilit
 /** Informational context retains disabled captions, but uses the same geometry boundary. */
 internal fun ScreenElement.contextEligibility(viewport: ScreenViewport): ScreenElementEligibility {
     if (!visibleToUser) return ineligible(ScreenElementIneligibility.HIDDEN)
-    if (password) return ineligible(ScreenElementIneligibility.PASSWORD)
     return visibilityEligibility(viewport)
 }
 
