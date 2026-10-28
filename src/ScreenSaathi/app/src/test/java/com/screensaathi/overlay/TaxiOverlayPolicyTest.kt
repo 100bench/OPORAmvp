@@ -30,4 +30,13 @@ class TaxiOverlayPolicyTest {
         assertFalse(visibility.voice)
         assertFalse(visibility.stop)
     }
+
+    @Test
+    fun `failed taxi step is recoverable from the visible microphone`() {
+        val instruction = TaxiOverlayPolicy.failureInstruction("Сервис AI временно не ответил.")
+
+        assertTrue(instruction.contains("нажмите микрофон", ignoreCase = true))
+        assertFalse(TaxiOverlayPolicy.offerResume)
+        assertFalse(TaxiOverlayPolicy.speakVoiceErrors)
+    }
 }

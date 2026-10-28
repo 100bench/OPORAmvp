@@ -68,17 +68,21 @@ object TargetResolver {
             .map { Candidate(it, SCORE_EXACT_ID, "exact_id") },
     )
 
-    /**
-     * Trust the model only to choose an index from the exact tree it received.
-     * [rank] still enforces local visibility, enabled state and actionability.
-     */
-    fun resolveIndex(index: Int, snapshot: ScreenSnapshot): Result = rank(
-        index.toString(),
-        snapshot,
-        snapshot.elements
-            .filter { it.index == index }
-            .map { Candidate(it, SCORE_EXACT_TEXT, "exact_snapshot_index") },
-    )
+    /** Trust only an exact actionable index from the tree sent to the model. */
+    fun resolveIndex(index: Int, snapshot: ScreenSnapshot): Result {
+        val element = snapshot.elements.singleOrNull { it.index == index }
+            ?: return Result.NotFound(index.toString())
+        val eligibility = element.eligibility(snapshot.viewportOrLegacy)
+        if (eligibility is ScreenElementEligibility.Ineligible) {
+            return if (eligibility.reason in VISIBILITY_FAILURES) {
+                Result.NotVisible(index.toString())
+            } else {
+                Result.NotActionable(index.toString())
+            }
+        }
+        if (!element.isActionable) return Result.NotActionable(index.toString())
+        return Result.Found(Candidate(element, SCORE_EXACT_TEXT, "exact_snapshot_index"))
+    }
 
     /** Restrict semantic matches only; normalization still needs the complete tree. */
     fun resolveLabel(label: String, snapshot: ScreenSnapshot, matchingResourceId: String? = null): Result = rank(

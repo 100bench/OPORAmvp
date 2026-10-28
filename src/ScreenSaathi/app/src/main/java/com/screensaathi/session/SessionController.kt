@@ -28,6 +28,7 @@ import com.screensaathi.overlay.DecisionChoice
 import com.screensaathi.overlay.HighlightBounds
 import com.screensaathi.overlay.OverlayCommand
 import com.screensaathi.overlay.PillState
+import com.screensaathi.overlay.TaxiOverlayPolicy
 import com.screensaathi.opora.OporaSettings
 import com.screensaathi.sarvam.AudioPlayer
 import com.screensaathi.sarvam.Language
@@ -801,20 +802,22 @@ class SessionController(
 
     private fun showScenarioDecision(turn: Int, effect: ScenarioEffect.ShowDecision) {
         val command = scenarioDecisionCommand(effect, lastLanguage, currentUsefulInstruction, currentHighlight)
-        pendingScenarioPrimary = effect.choices.getOrNull(0)
-        pendingScenarioSecondary = effect.choices.getOrNull(1)
-        currentDecisionButtons = command.decisionButtons
-        renderIfCurrent(turn, command)
+        clearScenarioDecisions()
+        renderIfCurrent(
+            turn,
+            command.copy(
+                instruction = TaxiOverlayPolicy.failureInstruction(command.instruction.orEmpty()),
+                decisionButtons = null,
+            ),
+        )
     }
 
     private fun showRecoverableFailure(
         turn: Int,
         effect: ScenarioEffect.ShowRecoverableFailure,
     ) {
-        pendingScenarioChoices = effect.choices
-        val labels = effect.choices.map(::scenarioChoiceLabel)
-        currentChoices = labels
-        currentDecisionButtons = null
+        clearScenarioDecisions()
+        currentChoices = emptyList()
         val message = when (effect.reason) {
             ScenarioFailureReason.SCROLL_LIMIT ->
                 "После трёх прокруток цель не найдена. Можно переформулировать просьбу, начать заново или остановиться."
@@ -827,10 +830,10 @@ class SessionController(
             OverlayCommand(
                 PillState.ERROR,
                 expanded = true,
-                instruction = message,
+                instruction = TaxiOverlayPolicy.failureInstruction(message),
                 language = lastLanguage,
                 highlight = null,
-                choices = labels,
+                choices = emptyList(),
             ),
         )
     }
@@ -1277,7 +1280,7 @@ class SessionController(
         engine = null
         renderIfCurrent(turn, OverlayCommand(PillState.ERROR, expanded = true,
             instruction = phrase.text, language = phrase.language, highlight = null))
-        speech.post { speak(phrase, turn) }
+        if (TaxiOverlayPolicy.speakVoiceErrors) speech.post { speak(phrase, turn) }
     }
 
     /** Keep RepeatRecognition failures actionable instead of hiding the session behind an error. */
@@ -1296,10 +1299,10 @@ class SessionController(
             OverlayCommand(
                 PillState.ERROR,
                 expanded = true,
-                instruction = message,
+                instruction = TaxiOverlayPolicy.failureInstruction(message),
                 language = lastLanguage,
                 highlight = null,
-                decisionButtons = DecisionButtons.RETRY_OR_STOP,
+                decisionButtons = null,
             ),
         )
         return true

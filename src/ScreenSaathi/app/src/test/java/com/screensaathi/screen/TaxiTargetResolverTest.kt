@@ -32,6 +32,35 @@ class TaxiTargetResolverTest {
         }
     }
 
+    @Test
+    fun `planner index cannot redirect a static label to its clickable ancestor`() {
+        val parent = element(index = 6, text = "Куда поедете?")
+        val label = element(index = 7, text = "Куда поедете?").copy(
+            clickable = false,
+            clickableAncestorIndex = parent.index,
+        )
+
+        val result = TargetResolver.resolveIndex(label.index, snapshot(parent, label))
+
+        assertTrue(result !is TargetResolver.Result.Found)
+    }
+
+    @Test
+    fun `planner index cannot redirect a static label to a nearby input`() {
+        val label = element(index = 10, text = "Адрес").copy(
+            bounds = Rect(40, 100, 900, 180),
+            clickable = false,
+        )
+        val field = element(index = 11, text = "").copy(
+            bounds = Rect(40, 220, 900, 380),
+            editable = true,
+        )
+
+        val result = TargetResolver.resolveIndex(label.index, snapshot(label, field))
+
+        assertTrue(result !is TargetResolver.Result.Found)
+    }
+
     private fun snapshot(vararg elements: ScreenElement) = ScreenSnapshot(
         packageName = "ru.yandex.taxi",
         settled = true,

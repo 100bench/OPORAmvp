@@ -14,6 +14,9 @@ data class TaxiOverlayVisibility(
 
 /** User-facing surface for the dedicated taxi experiment branch. */
 object TaxiOverlayPolicy {
+    const val offerResume = false
+    const val speakVoiceErrors = false
+
     fun visibility(removalPending: Boolean) = TaxiOverlayVisibility(
         instruction = !removalPending,
         voice = !removalPending,
@@ -25,4 +28,7 @@ object TaxiOverlayPolicy {
         circleSelection = false,
         removalPrompt = removalPending,
     )
+
+    fun failureInstruction(message: String): String =
+        "$message Нажмите микрофон и повторите цель."
 }

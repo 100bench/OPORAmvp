@@ -152,7 +152,7 @@ class OverlayService : Service() {
         )
         controller.debugSink = SessionController.DebugSink { text -> main.post { updateDebug(text) } }
         render(OverlayCommand(PillState.IDLE, expanded = false))
-        controller.offerResumeIfAvailable()
+        if (TaxiOverlayPolicy.offerResume) controller.offerResumeIfAvailable()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
