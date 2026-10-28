@@ -36,6 +36,7 @@ import com.screensaathi.overlay.OverlayLayoutKey
 import com.screensaathi.overlay.OverlayRenderPolicy
 import com.screensaathi.overlay.PillLabels
 import com.screensaathi.overlay.PillState
+import com.screensaathi.overlay.TaxiOverlayPolicy
 import com.screensaathi.sarvam.Language
 import com.screensaathi.session.SessionController
 import com.screensaathi.session.ScenarioTelemetrySink
@@ -75,6 +76,8 @@ class OverlayService : Service() {
     private lateinit var textCommandRow: View
     private lateinit var voiceSlot: View
     private lateinit var removalPrompt: View
+    private lateinit var nextButton: View
+    private lateinit var stopButton: View
 
     private var expanded = false
     private var expansionRequestedDuringDrag: Boolean? = null
@@ -241,6 +244,8 @@ class OverlayService : Service() {
         textCommandRow = pillRoot.findViewById(R.id.text_command_row)
         voiceSlot = pillRoot.findViewById(R.id.voice_slot)
         removalPrompt = pillRoot.findViewById(R.id.removal_prompt)
+        nextButton = pillRoot.findViewById(R.id.next_button)
+        stopButton = pillRoot.findViewById(R.id.stop_button)
         pillRoot.findViewById<View>(R.id.removal_cancel_button).setOnClickListener {
             cancelRemovalPrompt()
         }
@@ -283,15 +288,12 @@ class OverlayService : Service() {
         micButton.setOnClickListener { controller.onMicTapped() }
         // Circle-selection mode stays on the expanded mic. The mascot's long
         // press is reserved for confirmed removal; diagnostics use the header.
-        micButton.setOnLongClickListener {
-            enterSelectionMode()
-            true
-        }
+        micButton.setOnLongClickListener { true }
         // While listening the mic is gone; the wave is what's under the
         // finger, so it has to end the turn too.
         waveform.setOnClickListener { controller.onMicTapped() }
-        pillRoot.findViewById<View>(R.id.next_button).setOnClickListener { controller.onNextTapped() }
-        pillRoot.findViewById<View>(R.id.stop_button).setOnClickListener { controller.onStopTapped() }
+        nextButton.setOnClickListener { controller.onNextTapped() }
+        stopButton.setOnClickListener { controller.onStopTapped() }
         pillRoot.findViewById<View>(R.id.close_button).setOnClickListener { toggleCard() }
 
         val lp = WindowManager.LayoutParams(
@@ -805,7 +807,7 @@ class OverlayService : Service() {
      * the first three in a curated order are the ones anyone will pick.
      */
     private fun renderChoices(choices: List<String>) {
-        choiceRow.visibility = if (choices.isEmpty()) View.GONE else View.VISIBLE
+        choiceRow.visibility = View.GONE
         choiceButtons.forEachIndexed { i, button ->
             val label = choices.getOrNull(i)
             button.visibility = if (label == null) View.GONE else View.VISIBLE
@@ -814,7 +816,7 @@ class OverlayService : Service() {
     }
 
     private fun renderDecision(buttons: DecisionButtons?) {
-        decisionRow.visibility = if (buttons == null) View.GONE else View.VISIBLE
+        decisionRow.visibility = View.GONE
         if (buttons == null) return
         decisionPrimaryButton.text = buttons.primaryLabel
         decisionSecondaryButton.text = buttons.secondaryLabel
@@ -925,16 +927,20 @@ class OverlayService : Service() {
 
     private fun renderRemovalPrompt() {
         val pending = presentation.removalPending
-        removalPrompt.visibility = if (pending) View.VISIBLE else View.GONE
-        instructionText.visibility = if (pending) View.GONE else View.VISIBLE
-        textCommandRow.visibility = if (pending) View.GONE else View.VISIBLE
-        voiceSlot.visibility = if (pending) View.GONE else View.VISIBLE
+        val visibility = TaxiOverlayPolicy.visibility(pending)
+        removalPrompt.visibility = visibility.removalPrompt.asViewVisibility()
+        instructionText.visibility = visibility.instruction.asViewVisibility()
+        textCommandRow.visibility = visibility.textInput.asViewVisibility()
+        languageChip.visibility = visibility.language.asViewVisibility()
+        nextButton.visibility = visibility.next.asViewVisibility()
+        stopButton.visibility = visibility.stop.asViewVisibility()
+        voiceSlot.visibility = visibility.voice.asViewVisibility()
+        choiceRow.visibility = visibility.choices.asViewVisibility()
+        decisionRow.visibility = visibility.choices.asViewVisibility()
         debugPanel.visibility = if (!pending && debugVisible) View.VISIBLE else View.GONE
-        if (pending) {
-            choiceRow.visibility = View.GONE
-            decisionRow.visibility = View.GONE
-        }
     }
+
+    private fun Boolean.asViewVisibility(): Int = if (this) View.VISIBLE else View.GONE
 
     private fun setExpanded(value: Boolean) {
         if (uiState == AssistantUiState.DRAGGING) {
